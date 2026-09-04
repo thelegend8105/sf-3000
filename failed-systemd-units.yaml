@@ -1,0 +1,22 @@
+id: failed-systemd-units
+description: One or more systemd services have entered a failed state
+applies_to:
+  os: linux
+  distros: [ubuntu, fedora]
+symptoms:
+  - "something isn't starting on boot"
+  - "a service keeps dying"
+detect:
+  command: "systemctl --failed --no-legend --plain | wc -l"
+  produces: integer          # count of failed units
+expect:
+  predicate: equals
+  value: 0                    # healthy = no failed units
+risk: safe
+requires_privilege: false
+reversible: true
+fix:
+  default: "systemctl reset-failed"   # clears failed state; re-run detect to confirm real recovery
+verify:
+  rerun: detect
+source: "internal — tested on Ubuntu 24.04"

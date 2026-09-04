@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SF3000 Playbook",
+  "description": "One vetted problem: how to detect it, what healthy looks like, and how to fix it.",
+  "type": "object",
+  "required": ["id", "description", "applies_to", "detect", "expect", "risk", "requires_privilege", "reversible"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Unique, filename-safe identifier."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line, plain-language statement of the problem."
+    },
+    "applies_to": {
+      "type": "object",
+      "required": ["os"],
+      "additionalProperties": false,
+      "properties": {
+        "os": { "type": "string", "enum": ["linux", "windows", "macos"] },
+        "distros": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "symptoms": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Free-text user complaints, used only for matching. Never executed."
+    },
+    "detect": {
+      "type": "object",
+      "required": ["command", "produces"],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "READ-ONLY command. Must not mutate the system."
+        },
+        "produces": {
+          "type": "string",
+          "enum": ["integer", "string", "exit_code", "line_count"],
+          "description": "How to turn the command's output into a measurement."
+        }
+      }
+    },
+    "expect": {
+      "type": "object",
+      "required": ["predicate"],
+      "additionalProperties": false,
+      "description": "The rule a healthy machine's measurement must satisfy.",
+      "properties": {
+        "predicate": {
+          "type": "string",
+          "enum": ["less_than", "greater_than", "equals", "not_equals", "contains", "not_contains", "regex_match", "exit_zero"]
+        },
+        "value": {
+          "description": "Comparison target. Omit for exit_zero."
+        }
+      }
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["safe", "moderate", "destructive"],
+      "description": "Governs whether the fix runs quietly, needs confirmation, or needs a snapshot first."
+    },
+    "requires_privilege": { "type": "boolean" },
+    "reversible": { "type": "boolean" },
+    "fix": {
+      "type": "object",
+      "description": "Vetted fix command(s), keyed by distro or 'default'.",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string" }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rerun": { "type": "string", "enum": ["detect"] }
+      }
+    },
+    "source": {
+      "type": "string",
+      "description": "Provenance: who vetted this and where it was tested."
+    }
+  }
+}

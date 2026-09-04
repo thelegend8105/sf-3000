@@ -1,0 +1,23 @@
+id: disk-root-near-full
+description: Root filesystem is critically low on free space
+applies_to:
+  os: linux
+  distros: [ubuntu, fedora]
+symptoms:
+  - "computer very slow and warns about low disk space"
+  - "update fails with no space left on device"
+detect:
+  command: "df --output=pcent / | tail -1 | tr -dc '0-9'"
+  produces: integer          # percent of / used
+expect:
+  predicate: less_than
+  value: 90                   # healthy = under 90% full
+risk: moderate
+requires_privilege: true
+reversible: false
+fix:
+  ubuntu: "apt-get clean && journalctl --vacuum-time=3d"
+  fedora: "dnf clean all && journalctl --vacuum-time=3d"
+verify:
+  rerun: detect
+source: "internal — tested on Ubuntu 22.04/24.04, Fedora 40"
