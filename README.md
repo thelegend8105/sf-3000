@@ -41,9 +41,10 @@ exit code zero, …).
 | `expect.predicate`   | the healthy rule (less_than, equals, exit_zero, regex_match…) |
 | `risk`               | safe / moderate / destructive — drives confirmation & snapshots |
 | `requires_privilege` | needs sudo/admin                                             |
-| `reversible`         | whether an undo exists                                       |
+| `reverse.strategy`   | how to undo: `command` / `snapshot_only` / `none`            |
+| `reverse.command`    | the undo command(s), keyed by distro — required for `command` |
 | `fix.<distro>`       | vetted fix command, keyed by distro (or `default`)          |
-| `verify.rerun`       | re-run detect after a fix to *prove* recovery                |
+| `verify.rerun`       | re-run detect after a fix to *prove* recovery — **mandatory whenever `fix` is present** |
 | `source`             | provenance — who vetted it and where it was tested          |
 
 The library is the trust anchor: entries that fail the schema are rejected
@@ -54,7 +55,9 @@ outright (try `--validate-only` against a broken file to see it bite).
 1. Copy an existing `.yaml`, change `id`/`description`.
 2. Write a **read-only** `detect` command and pick `produces`.
 3. Express healthy as an `expect` predicate.
-4. Add vetted `fix` command(s) per distro. Set `risk`/`reversible` honestly.
+4. Add vetted `fix` command(s) per distro, plus a `verify` (mandatory with a `fix`).
+   Set `risk` and `reverse` honestly — if a fix can delete data or break boot it is
+   `destructive` + `snapshot_only`.
 5. `python3 engine/runner.py --validate-only` must pass before it's committed.
 
 ## How the work divides

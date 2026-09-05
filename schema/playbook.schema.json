@@ -1,9 +1,9 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SF3000 Playbook",
-  "description": "One vetted problem: how to detect it, what healthy looks like, and how to fix it.",
+  "description": "One vetted problem: how to detect it, what healthy looks like, how to fix it, and how to undo the fix.",
   "type": "object",
-  "required": ["id", "description", "applies_to", "detect", "expect", "risk", "requires_privilege", "reversible"],
+  "required": ["id", "description", "applies_to", "detect", "expect", "risk", "requires_privilege", "reverse"],
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -66,16 +66,41 @@
       "description": "Governs whether the fix runs quietly, needs confirmation, or needs a snapshot first."
     },
     "requires_privilege": { "type": "boolean" },
-    "reversible": { "type": "boolean" },
+    "reverse": {
+      "type": "object",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "description": "How to undo the fix. The engine reads this to decide whether to snapshot before fixing and how to roll back after a failure.",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["command", "snapshot_only", "none"],
+          "description": "command = an explicit undo command exists; snapshot_only = the only way back is a restore point (destructive/irreversible fixes); none = the fix is harmless or only touches regenerable state, so there is nothing to undo."
+        },
+        "command": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "description": "Undo command(s), keyed by distro or 'default'. Required when strategy is 'command'."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "strategy": { "const": "command" } } },
+          "then": { "required": ["command"] }
+        }
+      ]
+    },
     "fix": {
       "type": "object",
-      "description": "Vetted fix command(s), keyed by distro or 'default'.",
+      "description": "Vetted fix command(s), keyed by distro or 'default'. Omit entirely for a detect-only (report, never fix) playbook.",
       "minProperties": 1,
       "additionalProperties": { "type": "string" }
     },
     "verify": {
       "type": "object",
       "additionalProperties": false,
+      "description": "How to confirm the fix worked. Re-running detect is the default.",
       "properties": {
         "rerun": { "type": "string", "enum": ["detect"] }
       }
@@ -84,5 +109,11 @@
       "type": "string",
       "description": "Provenance: who vetted this and where it was tested."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["fix"] },
+      "then": { "required": ["verify"] }
+    }
+  ]
 }

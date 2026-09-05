@@ -13,7 +13,11 @@ expect:
   predicate: exit_zero       # healthy = package present
 risk: safe
 requires_privilege: true
-reversible: true
+reverse:
+  strategy: command          # cleanly undoable: just remove the package again
+  command:
+    ubuntu: "apt-get remove -y net-tools"
+    fedora: "dnf remove -y net-tools"
 fix:
   ubuntu: "apt-get install -y net-tools"
   fedora: "dnf install -y net-tools"

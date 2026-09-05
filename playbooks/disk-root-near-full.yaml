@@ -14,7 +14,8 @@ expect:
   value: 90                   # healthy = under 90% full
 risk: moderate
 requires_privilege: true
-reversible: false
+reverse:
+  strategy: none             # only reclaims apt cache + old journals; nothing worth undoing
 fix:
   ubuntu: "apt-get clean && journalctl --vacuum-time=3d"
   fedora: "dnf clean all && journalctl --vacuum-time=3d"
