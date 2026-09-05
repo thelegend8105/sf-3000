@@ -230,8 +230,13 @@ distro.
 - **Confirmation in plain language** before anything that modifies the system.
   In the base product this text is a *reviewed field on the playbook* — written
   and vetted alongside the fix — not something the AI generates at runtime.
-- **Reversibility** — each playbook states whether an undo exists; prefer fixes
-  that can be undone.
+- **Reversibility** — each playbook states *how* it is undone via its `reverse`
+  block: an explicit undo `command`, `snapshot_only` (the only way back is a
+  restore point), or `none` (nothing meaningful to undo). Prefer fixes that
+  carry a real undo command.
+- **Never escalate privilege on the user's behalf.** A playbook marked
+  `requires_privilege` is run as-is; the engine refuses to start rather than
+  prepending `sudo` to a vetted command (see §16).
 - **Logging** — every command run (and its output) is recorded, so there's a
   trail if something goes wrong.
 - **Verify after fix** — never assume success; re-run the check to prove it.
@@ -332,7 +337,66 @@ the contract everything else plugs into.
 
 ---
 
-*Last updated: revision 3 — reconciled with the rough-plan sketch. The AI agent
+## 16. Decisions log
+
+§15 holds what is still open. This holds what has been settled, with the reason,
+so neither list has to be guessed at later.
+
+**Schema v2 — `reverse` replaces the `reversible` boolean.** A boolean could say
+that an undo existed but not *what it was*, which is useless to a runner that has
+to actually perform the undo. `reverse.strategy` is one of `command` (an explicit
+undo command, supplied in `reverse.command`), `snapshot_only` (destructive; the
+only way back is a restore point), or `none` (the fix only touches regenerable
+state — cache, old journals, a failed-state flag).
+
+**`verify` is mandatory whenever a `fix` exists.** A fix that cannot be checked
+has no business running unattended. A detect-only playbook — no `fix`, no
+`verify` — remains valid, and is the intended shape for "report it, never touch
+it" cases such as a full *user* data partition.
+
+**A fix that exits 0 but does not flip the predicate is a failure.** Exit status
+describes the command; the predicate describes the machine. Only the second one
+matters.
+
+**Snapshot gate: `risk == destructive` OR `reverse.strategy == snapshot_only`.**
+This falls out of the two fields above, so it is runner behaviour rather than a
+schema field. Safe and `command`-reversible fixes skip the snapshot.
+
+**Confirmation is a plain CLI `y/N` prompt at P1.** The nicer TUI is P2; there is
+no point investing in presentation before the lifecycle underneath it is proven.
+
+**Logging is JSON Lines, one record per fix run.** Chosen so the eventual fleet
+dashboard can consume the same records unchanged, with no reformatting step.
+
+**2026-09-05 — The engine refuses rather than escalating privilege.** When a
+playbook is marked `requires_privilege` and the engine is not already running
+with the necessary rights, it stops with a clear message telling the user to
+re-run under `sudo`. It does **not** prepend `sudo` itself.
+
+*Why:* the project's core rule (§4) is that no vetted command is authored or
+edited outside review. Prepending `sudo` is an edit — small, but it makes the
+command that runs differ from the command a human approved, and it is exactly
+the kind of convenience that erodes the guarantee the whole design rests on.
+Refusing keeps the executed command byte-identical to the reviewed one, and
+makes the privilege decision the user's explicit act rather than the tool's
+silent one.
+
+**2026-09-05 — `rollback_failed` is added to the run outcomes.** Outcomes are
+`healed`, `fix_failed`, `verify_failed`, `rolled_back`, and `rollback_failed`.
+
+*Why:* the original four had no way to record a failed fix whose undo *also*
+failed. That is the worst state the system can reach — the machine has been
+changed, the change did not work, and the change could not be taken back — and
+it was the one state the log could not describe. It is also precisely what
+someone reading the logs later most needs to find. The outcome field records
+the final state of the machine; the rollback method and its result are recorded
+alongside it as separate fields.
+
+---
+
+*Last updated: revision 4 — added §16 (decisions log) recording the schema v2
+model, the privilege and rollback-outcome decisions of 2026-09-05, and brought
+§10 in line with the `reverse` block. Revision 3 — reconciled with the rough-plan sketch. The AI agent
 is now a "perhaps introduce novelty" direction, not part of the MVP; MVP
 complaint-matching is deterministic (no AI); roadmap split into Build-Out-MVP
 and Perhaps-Introduce-Novelty to mirror the sketch. Open questions (§15) left

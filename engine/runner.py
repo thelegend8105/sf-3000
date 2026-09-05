@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
 """
-SF 3000 — minimal engine (single-machine, detect-only vertical slice).
+SF 3000 — engine (single machine).
 
-What it does today:
+Detect path (unchanged):
   * loads playbooks from a directory
   * validates each against schema/playbook.schema.json
   * runs the READ-ONLY detect command
   * evaluates the expect predicate  -> HEALTHY / PROBLEM / ERROR
-  * for a PROBLEM, prints the vetted fix as a DRY-RUN (never executes it)
+
+Fix path (P1, opt-in via --fix <id>):
+  confirm -> [snapshot if gated] -> fix -> verify -> log -> rollback on failure
+
+Fixes NEVER run unless --fix names a playbook explicitly. Without it this is
+still a read-only reporting tool.
 
 What it deliberately does NOT do yet:
-  * run any fix (that belongs to the safety layer: confirm, snapshot, log)
-  * match free-text complaints to playbooks (that's the LLM matcher layer)
-Both plug into this same contract later.
+  * take snapshots (mechanism unratified — the gate refuses instead of guessing)
+  * match free-text complaints to playbooks (that's the matcher layer)
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -30,12 +36,40 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "playbook.schema.json"
+DEFAULT_LOG = ROOT / "logs" / "runs.jsonl"
 
 HEALTHY, PROBLEM, ERROR = "HEALTHY", "PROBLEM", "ERROR"
 
+DETECT_TIMEOUT = 30    # read-only probes are quick
+FIX_TIMEOUT = 600      # apt-get install on a slow VM is not
+
+# Outcomes describe the final state of the MACHINE (see DESIGN.md section 16).
+HEALED = "healed"                    # fix ran, predicate flipped
+FIX_FAILED = "fix_failed"            # fix errored, nothing undone
+VERIFY_FAILED = "verify_failed"      # fix ran, predicate did not flip, nothing undone
+ROLLED_BACK = "rolled_back"          # undo ran and succeeded
+ROLLBACK_FAILED = "rollback_failed"  # undo attempted and failed — worst case
+
+try:  # keep the tick/cross glyphs from crashing a cp1252 console (Windows)
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+
+def _marks():
+    try:
+        "✓✗→".encode(sys.stdout.encoding or "ascii")
+        return {"HEALTHY": "✓", "PROBLEM": "✗",
+                "ERROR": "!", "arrow": "→"}
+    except (UnicodeEncodeError, LookupError):
+        return {"HEALTHY": "OK", "PROBLEM": "XX", "ERROR": "!!", "arrow": "->"}
+
+
+MARK = _marks()
+
 
 def load_schema():
-    return json.loads(SCHEMA_PATH.read_text())
+    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def load_playbooks(pb_dir: Path, validator: Draft7Validator):
@@ -43,7 +77,7 @@ def load_playbooks(pb_dir: Path, validator: Draft7Validator):
     validation is rejected outright — the library is the trust anchor."""
     playbooks, errors = [], []
     for path in sorted(pb_dir.glob("*.yaml")):
-        pb = yaml.safe_load(path.read_text())
+        pb = yaml.safe_load(path.read_text(encoding="utf-8"))
         schema_errs = sorted(validator.iter_errors(pb), key=lambda e: e.path)
         if schema_errs:
             msgs = "; ".join(e.message for e in schema_errs)
@@ -59,7 +93,7 @@ def run_detect(pb: dict):
     produces = pb["detect"]["produces"]
     try:
         proc = subprocess.run(cmd, shell=True, capture_output=True,
-                              text=True, timeout=30)
+                              text=True, timeout=DETECT_TIMEOUT)
     except subprocess.TimeoutExpired:
         return None, None, "detect timed out"
 
@@ -102,13 +136,18 @@ def evaluate(pb: dict, measurement, proc) -> bool:
     raise ValueError(f"unknown predicate: {pred}")
 
 
-def diagnose(pb: dict):
+def assess(pb: dict):
+    """Full read: (status, measurement, detail). diagnose() wraps this."""
     measurement, proc, err = run_detect(pb)
     if err:
-        return ERROR, err
+        return ERROR, None, err
     healthy = evaluate(pb, measurement, proc)
-    detail = f"measured={measurement!r}"
-    return (HEALTHY if healthy else PROBLEM), detail
+    return (HEALTHY if healthy else PROBLEM), measurement, f"measured={measurement!r}"
+
+
+def diagnose(pb: dict):
+    status, _measurement, detail = assess(pb)
+    return status, detail
 
 
 def pick_fix(pb: dict, distro: str):
@@ -116,11 +155,198 @@ def pick_fix(pb: dict, distro: str):
     return fix.get(distro) or fix.get("default")
 
 
+def pick_reverse(pb: dict, distro: str):
+    """The undo command, when reverse.strategy is 'command'."""
+    cmds = pb["reverse"].get("command", {})
+    return cmds.get(distro) or cmds.get("default")
+
+
+def needs_snapshot(pb: dict) -> bool:
+    """Gate from DESIGN.md section 16: destructive risk OR snapshot_only undo."""
+    return pb["risk"] == "destructive" or pb["reverse"]["strategy"] == "snapshot_only"
+
+
+def has_privilege() -> bool:
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None:
+        return geteuid() == 0
+    try:  # Windows
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def run_command(cmd: str, timeout: int):
+    """Run a vetted command verbatim. Returns (exit_code, stdout, stderr).
+    The command is never edited — not even to add sudo (DESIGN.md section 16)."""
+    try:
+        proc = subprocess.run(cmd, shell=True, capture_output=True,
+                              text=True, timeout=timeout)
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return None, "", f"timed out after {timeout}s"
+
+
+def confirm(pb: dict, fix_cmd: str, snapshot: bool) -> bool:
+    strategy = pb["reverse"]["strategy"]
+    print()
+    print("=" * 64)
+    print(f"  {pb['id']}")
+    print(f"  {pb['description']}")
+    print("-" * 64)
+    print(f"  command   : {fix_cmd}")
+    print(f"  risk      : {pb['risk']}")
+    print(f"  undo      : {strategy}")
+    if strategy == "none":
+        print("              (no undo — if this fails you fix it by hand)")
+    print(f"  snapshot  : {'yes' if snapshot else 'no'}")
+    print(f"  source    : {pb.get('source', 'unrecorded')}")
+    print("=" * 64)
+    try:
+        return input("Run this fix? [y/N] ").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def rollback(pb: dict, distro: str, record: dict):
+    """Undo a fix. Returns ROLLED_BACK / ROLLBACK_FAILED, or None when there is
+    nothing to undo (the caller then keeps its own failure outcome)."""
+    strategy = pb["reverse"]["strategy"]
+    record["rollback_method"] = strategy
+
+    if strategy == "none":
+        record["rollback_result"] = "nothing to undo"
+        print(f"  {MARK['arrow']} no undo exists for this playbook — "
+              "the machine needs manual attention")
+        return None
+
+    if strategy == "snapshot_only":
+        record["rollback_result"] = "unimplemented"
+        print(f"  {MARK['arrow']} rollback needs a snapshot restore, "
+              "which is not built yet")
+        return ROLLBACK_FAILED
+
+    undo = pick_reverse(pb, distro)
+    if not undo:
+        record["rollback_result"] = f"no undo command for distro {distro!r}"
+        print(f"  {MARK['arrow']} no undo command for {distro}")
+        return ROLLBACK_FAILED
+
+    print(f"  {MARK['arrow']} rolling back: {undo}")
+    code, _out, err = run_command(undo, FIX_TIMEOUT)
+    record["rollback_command"] = undo
+    record["rollback_exit_code"] = code
+    if code == 0:
+        record["rollback_result"] = "ok"
+        print(f"  {MARK['arrow']} rollback succeeded")
+        return ROLLED_BACK
+    record["rollback_result"] = f"failed: {err or code}"
+    print(f"  {MARK['arrow']} ROLLBACK FAILED ({err or code})")
+    return ROLLBACK_FAILED
+
+
+def log_run(record: dict, log_path: Path):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def fix_one(pb: dict, distro: str, log_path: Path) -> int:
+    """Run the full lifecycle for one playbook. Returns a process exit code."""
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "playbook_id": pb["id"],
+        "distro": distro,
+        "detect_before": None,
+        "confirmed": False,
+        "snapshot_taken": False,
+        "snapshot_id": None,
+        "fix_command": None,
+        "fix_exit_code": None,
+        "verify_after": None,
+        "outcome": None,
+        "rollback_method": None,
+        "rollback_result": None,
+    }
+
+    fix_cmd = pick_fix(pb, distro)
+    if not fix_cmd:
+        if "fix" not in pb:
+            print(f"{pb['id']} is detect-only — it has no fix by design.")
+        else:
+            print(f"{pb['id']} has no fix command for distro {distro!r}.")
+        return 2
+
+    # Privilege: refuse, never escalate (DESIGN.md section 16).
+    if pb.get("requires_privilege") and not has_privilege():
+        print(f"{pb['id']} requires administrative privilege and this engine "
+              "is not running with it.")
+        print("Re-run under sudo. The engine will not add sudo to a vetted "
+              "command on your behalf.")
+        return 3
+
+    # Snapshot gate — refuse rather than fix unprotected.
+    snapshot = needs_snapshot(pb)
+    if snapshot:
+        print(f"{pb['id']} requires a snapshot before fixing "
+              f"(risk={pb['risk']}, undo={pb['reverse']['strategy']}), and the "
+              "snapshot mechanism is not built yet. Refusing to fix.")
+        return 4
+
+    status, measurement, detail = assess(pb)
+    record["detect_before"] = measurement
+    if status == ERROR:
+        print(f"{MARK['ERROR']} detect failed: {detail}")
+        return 1
+    if status == HEALTHY:
+        print(f"{MARK['HEALTHY']} {pb['id']} is already healthy ({detail}). "
+              "Nothing to do.")
+        return 0
+
+    print(f"{MARK['PROBLEM']} {pb['id']}: {detail}")
+    if not confirm(pb, fix_cmd, snapshot):
+        print("Cancelled. Nothing was run.")
+        return 0
+    record["confirmed"] = True
+
+    print(f"\n  {MARK['arrow']} running: {fix_cmd}")
+    code, _out, err = run_command(fix_cmd, FIX_TIMEOUT)
+    record["fix_command"] = fix_cmd
+    record["fix_exit_code"] = code
+
+    if code != 0:
+        print(f"  {MARK['arrow']} fix failed (exit={code}) {err}")
+        record["outcome"] = rollback(pb, distro, record) or FIX_FAILED
+    else:
+        print(f"  {MARK['arrow']} fix exited 0 — verifying")
+        v_status, v_measure, v_detail = assess(pb)
+        record["verify_after"] = v_measure
+        if v_status == HEALTHY:
+            print(f"  {MARK['HEALTHY']} verified healthy ({v_detail})")
+            record["outcome"] = HEALED
+        else:
+            # Exit 0 is not success. The predicate decides.
+            print(f"  {MARK['PROBLEM']} fix ran but the machine is still "
+                  f"unhealthy ({v_detail})")
+            record["outcome"] = rollback(pb, distro, record) or VERIFY_FAILED
+
+    log_run(record, log_path)
+    print(f"\noutcome: {record['outcome']}  (logged to {log_path})")
+    return 0 if record["outcome"] == HEALED else 1
+
+
 def main():
-    ap = argparse.ArgumentParser(description="SF 3000 engine (detect-only slice)")
+    ap = argparse.ArgumentParser(description="SF 3000 engine")
     ap.add_argument("--playbooks", default=str(ROOT / "playbooks"))
-    ap.add_argument("--distro", default="ubuntu", help="target distro for fix selection")
+    ap.add_argument("--distro", default="ubuntu",
+                    help="target distro for fix selection")
     ap.add_argument("--validate-only", action="store_true")
+    ap.add_argument("--fix", metavar="ID",
+                    help="actually run the fix for this playbook id (asks first)")
+    ap.add_argument("--log", default=str(DEFAULT_LOG),
+                    help="JSONL run log (default: logs/runs.jsonl)")
     args = ap.parse_args()
 
     validator = Draft7Validator(load_schema())
@@ -129,28 +355,37 @@ def main():
     if errors:
         print("SCHEMA ERRORS — these playbooks were rejected:")
         for e in errors:
-            print(f"  ✗ {e}")
+            print(f"  {MARK['PROBLEM']} {e}")
         print()
 
     print(f"Loaded {len(playbooks)} valid playbook(s).")
     if args.validate_only:
         return 1 if errors else 0
 
+    if args.fix:
+        chosen = next((p for p in playbooks if p["id"] == args.fix), None)
+        if chosen is None:
+            print(f"No valid playbook with id {args.fix!r}.")
+            return 2
+        return fix_one(chosen, args.distro, Path(args.log))
+
     problems = 0
     print("\nRunning checks:\n" + "-" * 60)
     for pb in playbooks:
         status, detail = diagnose(pb)
-        mark = {"HEALTHY": "✓", "PROBLEM": "✗", "ERROR": "!"}[status]
-        print(f"{mark} [{status:7}] {pb['id']:22} {detail}")
+        print(f"{MARK[status]} [{status:7}] {pb['id']:22} {detail}")
         if status == PROBLEM:
             problems += 1
             fix = pick_fix(pb, args.distro)
-            print(f"            → {pb['description']}")
-            print(f"            → risk={pb['risk']} undo={pb['reverse']['strategy']} "
+            print(f"            {MARK['arrow']} {pb['description']}")
+            print(f"            {MARK['arrow']} risk={pb['risk']} "
+                  f"undo={pb['reverse']['strategy']} "
                   f"privilege={pb['requires_privilege']}")
-            print(f"            → DRY-RUN fix ({args.distro}): {fix}")
+            print(f"            {MARK['arrow']} DRY-RUN fix ({args.distro}): {fix}")
     print("-" * 60)
     print(f"{problems} problem(s) found. (No fixes were executed.)")
+    if problems:
+        print("Run one for real with:  --fix <id>")
     return 0
 
 
