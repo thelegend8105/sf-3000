@@ -1,0 +1,34 @@
+# NOT A REAL PLAYBOOK. Deliberately broken, for proving rollback works.
+#
+# The "fix" installs the wrong package: it exits 0, so the engine treats the
+# command as having succeeded, but the predicate never flips. That is exactly
+# the failure the verify step exists to catch, and it is the only way to prove
+# the rollback path on real apt rather than on a synthetic stand-in.
+#
+# Expected outcome: verify_failed -> rollback runs -> outcome "rolled_back",
+# with cowsay removed and the machine back where it started.
+#
+# Lives in tests/, NOT playbooks/, so it never loads in a normal run.
+id: rollback-proof
+description: Deliberately failing fix, used to prove the rollback path
+applies_to:
+  os: linux
+  distros: [ubuntu]
+symptoms:
+  - "not a real symptom - test fixture only"
+detect:
+  command: "dpkg -s net-tools"
+  produces: exit_code
+expect:
+  predicate: exit_zero
+risk: safe
+requires_privilege: true
+reverse:
+  strategy: command
+  command:
+    ubuntu: "apt-get remove -y cowsay"
+fix:
+  ubuntu: "apt-get install -y cowsay"   # wrong package on purpose: exits 0, heals nothing
+verify:
+  rerun: detect
+source: "internal - test fixture, not a vetted repair"
