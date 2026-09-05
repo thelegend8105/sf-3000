@@ -50,6 +50,7 @@ FIX_FAILED = "fix_failed"            # fix errored, nothing undone
 VERIFY_FAILED = "verify_failed"      # fix ran, predicate did not flip, nothing undone
 ROLLED_BACK = "rolled_back"          # undo ran and succeeded
 ROLLBACK_FAILED = "rollback_failed"  # undo attempted and failed — worst case
+DECLINED = "declined"                # problem found, fix offered, human said no
 
 try:  # keep the tick/cross glyphs from crashing a cp1252 console (Windows)
     sys.stdout.reconfigure(encoding="utf-8")
@@ -373,7 +374,13 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
 
     print(f"{MARK['PROBLEM']} {pb['id']}: {detail}")
     if not confirm(pb, fix_cmd, snapshot):
-        print("Cancelled. Nothing was run.")
+        # A decline is a real event: the engine found a problem, offered a
+        # vetted fix, and a person said no. Worth recording — a fix that is
+        # repeatedly declined is telling you something about the fix.
+        record["fix_command"] = fix_cmd
+        record["outcome"] = DECLINED
+        log_run(record, log_path)
+        print(f"Cancelled. Nothing was run. (logged to {log_path})")
         return 0
     record["confirmed"] = True
 

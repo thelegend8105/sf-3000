@@ -393,6 +393,17 @@ meaningless. Skipping silently would have the same flaw at a smaller scale, so
 "we did not check this" is printed as distinctly as "we checked this and it is
 fine."
 
+**2026-09-05 — A declined fix is logged.** When the engine finds a problem,
+offers a vetted fix, and the person says no, that is written to the log with
+outcome `declined` and `confirmed: false`.
+
+*Why:* the record already carried a `confirmed` field, but declines returned
+before reaching the log, so the field was `true` in every record that existed
+and therefore recorded nothing. Beyond making the field mean something, a fix
+that is repeatedly declined is evidence about the fix — that it is wrong, or
+frightening, or badly explained — and that signal is only visible if the
+refusals are counted alongside the runs.
+
 **2026-09-05 — The engine identifies the machine itself.** The OS comes from
 the platform and the distro from `/etc/os-release`; `--os` and `--distro` remain
 only as testing overrides.
@@ -409,8 +420,9 @@ deliberately not used to widen a match: Mint declaring `ID_LIKE=ubuntu` means
 Ubuntu commands will probably work there, and probably is not the standard the
 rest of the engine holds to.
 
-**2026-09-05 — `rollback_failed` is added to the run outcomes.** Outcomes are
-`healed`, `fix_failed`, `verify_failed`, `rolled_back`, and `rollback_failed`.
+**2026-09-05 — `rollback_failed` and `declined` are added to the run outcomes.**
+Outcomes are `healed`, `fix_failed`, `verify_failed`, `rolled_back`,
+`rollback_failed`, and `declined`.
 
 *Why:* the original four had no way to record a failed fix whose undo *also*
 failed. That is the worst state the system can reach — the machine has been
