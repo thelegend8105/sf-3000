@@ -36,6 +36,7 @@ exit code zero, …).
 
 | field                | purpose                                                      |
 |----------------------|--------------------------------------------------------------|
+| `applies_to.os`      | which machines this is for — others report SKIPPED, never run |
 | `detect.command`     | READ-ONLY probe. Must never mutate the system.               |
 | `detect.produces`    | how to read the output: integer / string / exit_code / line_count |
 | `expect.predicate`   | the healthy rule (less_than, equals, exit_zero, regex_match…) |

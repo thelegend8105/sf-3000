@@ -39,6 +39,7 @@ SCHEMA_PATH = ROOT / "schema" / "playbook.schema.json"
 DEFAULT_LOG = ROOT / "logs" / "runs.jsonl"
 
 HEALTHY, PROBLEM, ERROR = "HEALTHY", "PROBLEM", "ERROR"
+SKIPPED = "SKIPPED"   # not for this machine — deliberately NOT checked
 
 DETECT_TIMEOUT = 30    # read-only probes are quick
 FIX_TIMEOUT = 600      # apt-get install on a slow VM is not
@@ -60,9 +61,10 @@ def _marks():
     try:
         "✓✗→".encode(sys.stdout.encoding or "ascii")
         return {"HEALTHY": "✓", "PROBLEM": "✗",
-                "ERROR": "!", "arrow": "→"}
+                "ERROR": "!", "SKIPPED": "-", "arrow": "→"}
     except (UnicodeEncodeError, LookupError):
-        return {"HEALTHY": "OK", "PROBLEM": "XX", "ERROR": "!!", "arrow": "->"}
+        return {"HEALTHY": "OK", "PROBLEM": "XX", "ERROR": "!!",
+                "SKIPPED": "--", "arrow": "->"}
 
 
 MARK = _marks()
@@ -148,6 +150,34 @@ def assess(pb: dict):
 def diagnose(pb: dict):
     status, _measurement, detail = assess(pb)
     return status, detail
+
+
+def current_os() -> str:
+    """This machine, in the vocabulary applies_to.os uses."""
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return sys.platform
+
+
+def applies(pb: dict, host_os: str, distro: str):
+    """Is this playbook meant for this machine? Returns (bool, reason).
+
+    A playbook that does not apply is never run. Its detect command may well
+    still execute here and return something plausible — a linux df on a
+    Windows box will happily measure the wrong disk — and a confident wrong
+    answer is worse than no answer.
+    """
+    want_os = pb["applies_to"]["os"]
+    if want_os != host_os:
+        return False, f"for {want_os}, this machine is {host_os}"
+    distros = pb["applies_to"].get("distros")
+    if distros and distro not in distros:
+        return False, f"for {'/'.join(distros)}, this machine is {distro}"
+    return True, None
 
 
 def pick_fix(pb: dict, distro: str):
@@ -253,8 +283,14 @@ def log_run(record: dict, log_path: Path):
         fh.write(json.dumps(record) + "\n")
 
 
-def fix_one(pb: dict, distro: str, log_path: Path) -> int:
+def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
     """Run the full lifecycle for one playbook. Returns a process exit code."""
+    # Wrong machine: refuse before anything, including detect.
+    ok, why = applies(pb, host_os, distro)
+    if not ok:
+        print(f"{pb['id']} does not apply to this machine ({why}). Refusing to fix.")
+        return 5
+
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "playbook_id": pb["id"],
@@ -347,6 +383,8 @@ def main():
                     help="actually run the fix for this playbook id (asks first)")
     ap.add_argument("--log", default=str(DEFAULT_LOG),
                     help="JSONL run log (default: logs/runs.jsonl)")
+    ap.add_argument("--os", dest="host_os", default=current_os(),
+                    help="override the detected OS (testing)")
     args = ap.parse_args()
 
     validator = Draft7Validator(load_schema())
@@ -367,11 +405,16 @@ def main():
         if chosen is None:
             print(f"No valid playbook with id {args.fix!r}.")
             return 2
-        return fix_one(chosen, args.distro, Path(args.log))
+        return fix_one(chosen, args.distro, Path(args.log), args.host_os)
 
-    problems = 0
-    print("\nRunning checks:\n" + "-" * 60)
+    problems = skipped = 0
+    print(f"\nRunning checks on {args.host_os}/{args.distro}:\n" + "-" * 60)
     for pb in playbooks:
+        ok, why = applies(pb, args.host_os, args.distro)
+        if not ok:
+            skipped += 1
+            print(f"{MARK[SKIPPED]} [{SKIPPED:7}] {pb['id']:22} not checked — {why}")
+            continue
         status, detail = diagnose(pb)
         print(f"{MARK[status]} [{status:7}] {pb['id']:22} {detail}")
         if status == PROBLEM:
@@ -383,7 +426,10 @@ def main():
                   f"privilege={pb['requires_privilege']}")
             print(f"            {MARK['arrow']} DRY-RUN fix ({args.distro}): {fix}")
     print("-" * 60)
-    print(f"{problems} problem(s) found. (No fixes were executed.)")
+    summary = f"{problems} problem(s) found."
+    if skipped:
+        summary += f" {skipped} playbook(s) skipped — not for this machine."
+    print(f"{summary} (No fixes were executed.)")
     if problems:
         print("Run one for real with:  --fix <id>")
     return 0

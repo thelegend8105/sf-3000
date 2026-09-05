@@ -381,6 +381,18 @@ Refusing keeps the executed command byte-identical to the reviewed one, and
 makes the privilege decision the user's explicit act rather than the tool's
 silent one.
 
+**2026-09-05 — A playbook that does not match the machine is reported as
+SKIPPED, not silently omitted.** The engine checks `applies_to` before running
+a detect, and refuses `--fix` on a non-matching playbook.
+
+*Why:* until now `applies_to` was declared but never read, so every playbook
+ran on every machine. Running the Linux disk playbook on Windows did not fail
+— a `df` on the PATH measured the wrong disk and returned HEALTHY. A confident
+wrong answer is worse than an error, because nothing signals that the check was
+meaningless. Skipping silently would have the same flaw at a smaller scale, so
+"we did not check this" is printed as distinctly as "we checked this and it is
+fine."
+
 **2026-09-05 — `rollback_failed` is added to the run outcomes.** Outcomes are
 `healed`, `fix_failed`, `verify_failed`, `rolled_back`, and `rollback_failed`.
 
