@@ -22,9 +22,21 @@ executes a fix. That belongs to the safety layer (next).
 
 ```bash
 pip install pyyaml jsonschema --break-system-packages
-python3 engine/runner.py --distro ubuntu        # full detect + diagnose pass
-python3 engine/runner.py --validate-only        # just check the library is sound
+
+python3 engine/runner.py                    # detect + diagnose everything
+python3 engine/runner.py --validate-only    # check the library, run nothing
+sudo python3 engine/runner.py --fix <id>    # actually fix one problem (asks first)
 ```
+
+The engine works out what machine it is on by itself — the OS from the
+platform, the distro from `/etc/os-release`. Playbooks that are not for this
+machine are reported as `SKIPPED` rather than run. `--os` and `--distro`
+override the detection for testing; you should not need them in normal use.
+
+Fixes only ever run when `--fix` names one explicitly, and only after you
+confirm. A playbook that needs privilege is refused unless the engine is
+already running with it — the engine will not add `sudo` to a vetted command
+on your behalf.
 
 ## Anatomy of a playbook
 

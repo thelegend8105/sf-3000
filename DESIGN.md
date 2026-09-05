@@ -393,6 +393,22 @@ meaningless. Skipping silently would have the same flaw at a smaller scale, so
 "we did not check this" is printed as distinctly as "we checked this and it is
 fine."
 
+**2026-09-05 — The engine identifies the machine itself.** The OS comes from
+the platform and the distro from `/etc/os-release`; `--os` and `--distro` remain
+only as testing overrides.
+
+*Why:* `--distro` previously defaulted to `ubuntu` on every machine, so half the
+machine's identity was discovered and half was assumed. On Fedora that assumption
+selects `apt-get` — and because `ubuntu` is a member of most playbooks' `distros`
+list, the `applies_to` check would pass first and nothing would warn. A tool that
+diagnoses machines should not need to be told what machine it is on.
+
+When the distro cannot be determined the engine reports it as unknown and skips
+distro-specific playbooks, rather than falling back to a guess. `ID_LIKE` is
+deliberately not used to widen a match: Mint declaring `ID_LIKE=ubuntu` means
+Ubuntu commands will probably work there, and probably is not the standard the
+rest of the engine holds to.
+
 **2026-09-05 — `rollback_failed` is added to the run outcomes.** Outcomes are
 `healed`, `fix_failed`, `verify_failed`, `rolled_back`, and `rollback_failed`.
 

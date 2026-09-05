@@ -152,6 +152,29 @@ def diagnose(pb: dict):
     return status, detail
 
 
+OS_RELEASE = Path("/etc/os-release")
+
+
+def current_distro(path: Path = OS_RELEASE):
+    """Ask the machine which distro it is, via /etc/os-release ID=.
+
+    Returns None when it cannot be determined. None is deliberate: the engine
+    then skips distro-specific playbooks and says so, rather than assuming a
+    distro and picking apt-get on a dnf box.
+
+    ID_LIKE is intentionally NOT used as a fallback. Mint reporting
+    ID_LIKE=ubuntu means Ubuntu commands will *probably* work there, and
+    "probably" is not the standard the rest of this engine holds to.
+    """
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("ID="):
+                return line.split("=", 1)[1].strip().strip("\"'").lower() or None
+    except OSError:
+        pass
+    return None
+
+
 def current_os() -> str:
     """This machine, in the vocabulary applies_to.os uses."""
     if sys.platform.startswith("linux"):
@@ -175,8 +198,12 @@ def applies(pb: dict, host_os: str, distro: str):
     if want_os != host_os:
         return False, f"for {want_os}, this machine is {host_os}"
     distros = pb["applies_to"].get("distros")
-    if distros and distro not in distros:
-        return False, f"for {'/'.join(distros)}, this machine is {distro}"
+    if distros:
+        if distro is None:
+            return False, (f"for {'/'.join(distros)}, and this machine's distro "
+                           "could not be determined")
+        if distro not in distros:
+            return False, f"for {'/'.join(distros)}, this machine is {distro}"
     return True, None
 
 
@@ -311,6 +338,9 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
     if not fix_cmd:
         if "fix" not in pb:
             print(f"{pb['id']} is detect-only — it has no fix by design.")
+        elif distro is None:
+            print(f"{pb['id']} keys its fix by distro, and this machine's "
+                  "distro could not be determined.")
         else:
             print(f"{pb['id']} has no fix command for distro {distro!r}.")
         return 2
@@ -376,8 +406,8 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
 def main():
     ap = argparse.ArgumentParser(description="SF 3000 engine")
     ap.add_argument("--playbooks", default=str(ROOT / "playbooks"))
-    ap.add_argument("--distro", default="ubuntu",
-                    help="target distro for fix selection")
+    ap.add_argument("--distro", default=current_distro(),
+                    help="override the detected distro (testing)")
     ap.add_argument("--validate-only", action="store_true")
     ap.add_argument("--fix", metavar="ID",
                     help="actually run the fix for this playbook id (asks first)")
@@ -408,7 +438,8 @@ def main():
         return fix_one(chosen, args.distro, Path(args.log), args.host_os)
 
     problems = skipped = 0
-    print(f"\nRunning checks on {args.host_os}/{args.distro}:\n" + "-" * 60)
+    identity = f"{args.host_os}/{args.distro}" if args.distro else args.host_os
+    print(f"\nRunning checks on {identity}:\n" + "-" * 60)
     for pb in playbooks:
         ok, why = applies(pb, args.host_os, args.distro)
         if not ok:
