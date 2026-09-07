@@ -1,0 +1,50 @@
+# CANDIDATE - not yet vetted. The project's origin story.
+#
+# The spreadsheet sketch detects with "lsb_release -sc + EOL check + apt-get
+# update result". `apt-get update` writes to /var/lib/apt/lists, so it is a
+# mutation and cannot be the detect - the sheet's own golden rule #1. This
+# detect is instead purely local and read-only: it asks whether the running
+# release is past its EOL date (from distro-info-data, already on the machine)
+# AND still points at the live archive. That pair is what breaks apt.
+#
+# KNOWN LIMIT: verify proves the sources were rewritten, not that `apt-get
+# update` now succeeds. Proving that requires a mutation, so it stays a manual
+# check after the run.
+id: eos-release-dead-repos
+description: This Ubuntu release is end-of-support and its apt sources still point at the live archive
+symptoms:
+  - "apt update says 404 not found"
+  - "repository does not have a Release file"
+  - "my Ubuntu is old and updates are broken"
+applies_to:
+  os: linux
+  distros: [ubuntu]
+detect:
+  command: |-
+    . /etc/os-release
+    awk -F, -v s="$VERSION_CODENAME" -v today="$(date +%F)" '$3 == s && $6 != "" && $6 < today { e = 1 } END { exit e ? 0 : 1 }' /usr/share/distro-info/ubuntu.csv || { echo 0; exit 0; }
+    grep -rhoE '(archive|security)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | wc -l
+  produces: integer          # live-archive references on an EOL release; 0 when supported
+expect:
+  predicate: equals
+  value: 0
+risk: moderate
+requires_privilege: true
+reverse:
+  strategy: command          # every edited file is backed up first, so the undo is real
+  command:
+    ubuntu: |-
+      for b in /etc/apt/sources.list.sf3000.bak /etc/apt/sources.list.d/*.sf3000.bak; do
+        [ -e "$b" ] || continue
+        mv -f "$b" "${b%.sf3000.bak}"
+      done
+fix:
+  ubuntu: |-
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+      [ -e "$f" ] || continue
+      cp -n "$f" "$f.sf3000.bak"
+      sed -i -E -e 's|https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu|http://old-releases.ubuntu.com/ubuntu|g' -e 's|https?://security\.ubuntu\.com/ubuntu|http://old-releases.ubuntu.com/ubuntu|g' "$f"
+    done
+verify:
+  rerun: detect
+source: "CANDIDATE - NOT VETTED. Sketch from sf3000-fixable-problems.xlsx (Ubuntu sheet, eos-release-dead-repos). Replace once a VM run fills in 'Tested on'."

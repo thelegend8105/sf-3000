@@ -2,7 +2,7 @@ id: net-tools-missing
 description: Legacy networking tools (ifconfig/route) are not installed
 applies_to:
   os: linux
-  distros: [ubuntu, fedora]
+  distros: [ubuntu]
 symptoms:
   - "ifconfig: command not found"
   - "old network script won't run"

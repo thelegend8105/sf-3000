@@ -2,7 +2,7 @@ id: failed-systemd-units
 description: One or more systemd services have entered a failed state
 applies_to:
   os: linux
-  distros: [ubuntu, fedora]
+  distros: [ubuntu]
 symptoms:
   - "something isn't starting on boot"
   - "a service keeps dying"

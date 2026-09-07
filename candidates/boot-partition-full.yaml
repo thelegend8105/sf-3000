@@ -1,0 +1,34 @@
+# CANDIDATE - not yet vetted. Lives in candidates/ so a normal sweep never
+# loads it. Run explicitly:
+#   sudo python3 engine/runner.py --playbooks candidates --fix boot-partition-full
+#
+# Detect differs from the spreadsheet sketch (`df -P /boot`) on purpose: when
+# /boot is NOT a separate mount, `df /boot` measures the ROOT filesystem, so a
+# full root would fire this playbook and disk-root-near-full at once, and the
+# kernel-removal fix would run for a problem it cannot solve. The findmnt guard
+# reports healthy when there is no separate /boot, leaving root's fullness to
+# the playbook that owns it.
+id: boot-partition-full
+description: The /boot partition is nearly full, so kernel and initramfs updates fail
+applies_to:
+  os: linux
+  distros: [ubuntu]
+symptoms:
+  - "apt upgrade fails with no space left on device"
+  - "kernel update won't install"
+  - "update-initramfs: failed"
+detect:
+  command: "findmnt -no TARGET /boot | grep -qx /boot && df --output=pcent /boot | tail -1 | tr -dc '0-9' || echo 0"
+  produces: integer          # percent of /boot used; 0 when /boot is not separate
+expect:
+  predicate: less_than
+  value: 80                   # tighter than root: a kernel + initramfs needs ~150-300MB
+risk: moderate
+requires_privilege: true
+reverse:
+  strategy: none             # removes only superseded kernels, re-installable from the archive
+fix:
+  ubuntu: "apt-get autoremove --purge -y"
+verify:
+  rerun: detect
+source: "CANDIDATE - NOT VETTED. Sketch from sf3000-fixable-problems.xlsx (Ubuntu sheet, boot-partition-full). Replace once a VM run fills in 'Tested on'."

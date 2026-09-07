@@ -1,0 +1,37 @@
+# CANDIDATE - not yet vetted.
+#
+# Deliberately NARROWER than the spreadsheet row. That row bundles three
+# different problems: radio soft-blocked, driver/firmware missing, and "present
+# but won't associate". Only the first is one problem, with one command and a
+# real undo. Firmware install needs real hardware to vet; "won't associate" is
+# usually credentials or the access point, which no vetted command can fix.
+#
+# VirtualBox exposes no wifi hardware. Test with the kernel's virtual radio:
+#   sudo modprobe mac80211_hwsim radios=1
+id: wifi-down
+description: The Wi-Fi radio is soft-blocked, so no wireless network can be seen or joined
+symptoms:
+  - "wifi is greyed out"
+  - "no wireless networks found"
+  - "wifi turned itself off"
+applies_to:
+  os: linux
+  distros: [ubuntu]
+detect:
+  command: |-
+    nmcli -t -f TYPE device 2>/dev/null | grep -qx wifi || exit 0
+    ! rfkill list wifi | grep -q 'Soft blocked: yes'
+  produces: exit_code        # 0 = no wifi hardware at all, or radio is unblocked
+expect:
+  predicate: exit_zero
+risk: safe
+requires_privilege: true
+reverse:
+  strategy: command          # putting the block back is exactly one command
+  command:
+    ubuntu: "rfkill block wifi"
+fix:
+  ubuntu: "rfkill unblock wifi"
+verify:
+  rerun: detect
+source: "CANDIDATE - NOT VETTED. Narrowed from sf3000-fixable-problems.xlsx (Ubuntu sheet, wifi-down). Replace once a VM run fills in 'Tested on'."

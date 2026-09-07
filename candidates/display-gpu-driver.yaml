@@ -1,0 +1,38 @@
+# CANDIDATE - not yet vetted, and DETECT-ONLY on purpose.
+#
+# The spreadsheet marks this row "moderate-destructive". Under DESIGN.md
+# section 16 a destructive playbook is snapshot-gated, and the snapshot
+# mechanism is not built - so a fix here would be REFUSED by the engine, not
+# run. Reinstalling a GPU driver is also the textbook way to leave a machine
+# with no display at all, which is exactly what that gate exists to prevent.
+#
+# So this reports and stops - the shape the sheet already uses for
+# home-partition-full ("safe (detect only)"). It earns a fix when the snapshot
+# layer exists AND the driver commands are vetted on real hardware; a VM's
+# virtual GPU cannot vet them.
+#
+# Scope note: this detects the display manager being down, which IS testable in
+# a VM. It deliberately does not check for a fallback-to-llvmpipe session:
+# under VirtualBox llvmpipe is the CORRECT state, so that check would report a
+# false problem in the very environment we test in.
+id: display-gpu-driver
+description: The graphical login manager is not running, so the machine has no desktop session
+symptoms:
+  - "boots to a black screen"
+  - "no login screen, just a text prompt"
+  - "desktop never comes up"
+applies_to:
+  os: linux
+  distros: [ubuntu]
+detect:
+  command: |-
+    [ -e /etc/systemd/system/display-manager.service ] || exit 0
+    systemctl is-active --quiet display-manager.service
+  produces: exit_code        # 0 = no display manager installed (server), or it is running
+expect:
+  predicate: exit_zero
+risk: moderate
+requires_privilege: false    # detect only; nothing here needs root
+reverse:
+  strategy: none             # nothing is changed, so there is nothing to undo
+source: "CANDIDATE - NOT VETTED, detect-only. Sketch from sf3000-fixable-problems.xlsx (Ubuntu sheet, display-gpu-driver). Replace once a VM run fills in 'Tested on'."

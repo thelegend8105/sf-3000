@@ -2,7 +2,7 @@ id: disk-root-near-full
 description: Root filesystem is critically low on free space
 applies_to:
   os: linux
-  distros: [ubuntu, fedora]
+  distros: [ubuntu]
 symptoms:
   - "computer very slow and warns about low disk space"
   - "update fails with no space left on device"
@@ -17,8 +17,8 @@ requires_privilege: true
 reverse:
   strategy: none             # only reclaims apt cache + old journals; nothing worth undoing
 fix:
-  ubuntu: "apt-get clean && journalctl --vacuum-time=3d"
-  fedora: "dnf clean all && journalctl --vacuum-time=3d"
+  ubuntu: "apt-get clean && journalctl --vacuum-time=7d"
+  fedora: "dnf clean all && journalctl --vacuum-time=7d"
 verify:
   rerun: detect
 source: "internal — tested on Ubuntu 22.04/24.04, Fedora 40"
