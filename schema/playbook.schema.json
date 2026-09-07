@@ -65,7 +65,10 @@
       "enum": ["safe", "moderate", "destructive"],
       "description": "Governs whether the fix runs quietly, needs confirmation, or needs a snapshot first."
     },
-    "requires_privilege": { "type": "boolean" },
+    "requires_privilege": {
+      "type": "boolean",
+      "description": "Whether the FIX needs root/admin. Detect is read-only and must run unprivileged; the engine reads this flag only before a fix, and refuses rather than adding sudo itself."
+    },
     "reverse": {
       "type": "object",
       "required": ["strategy"],

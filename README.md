@@ -1,22 +1,31 @@
-# Project: SF 3000 — starter slice
+# Project: SF 3000
 
-A vetted-playbook engine that diagnoses (and, later, fixes) OS problems for
+A vetted-playbook engine that diagnoses and fixes OS problems for
 non-technical users. The intelligence about *what command to run* lives in a
 reviewed **playbook library**, not in the model at runtime. The model's job is
 to *match and explain*, never to author commands that touch a machine.
 
-## What's here (the first vertical slice)
+## What's here
 
 ```
 schema/playbook.schema.json   the contract every playbook must satisfy
 playbooks/*.yaml              three real, vetted entries
-engine/runner.py             loads + validates + runs detect + diagnoses
+engine/runner.py              the engine: validate, detect, diagnose, fix
+tests/rollback-proof/         a fixture that exercises the rollback path
 ```
 
-This slice does **detect only**. It runs each playbook's read-only `detect`
+By default the engine is **read-only**. It runs each playbook's `detect`
 command, checks the result against `expect`, and reports HEALTHY / PROBLEM /
-ERROR. For a PROBLEM it prints the vetted fix as a **dry-run** — it never
-executes a fix. That belongs to the safety layer (next).
+ERROR / SKIPPED. For a PROBLEM it prints the vetted fix as a **dry-run**.
+
+Passing `--fix <id>` opts one playbook into the full lifecycle — confirm, fix,
+verify, log, and roll back if the fix does not prove itself. Nothing else on
+the machine is touched.
+
+> **Status: the fix lifecycle is written but not yet proven.** Every step of it
+> exists and is reviewed, but the path has not been exercised end-to-end on a
+> real machine, so treat Phase 1 as unfinished. `tests/rollback-proof/` is the
+> fixture that closes this out; see DESIGN.md §12.
 
 ## Run it
 
@@ -53,7 +62,7 @@ exit code zero, …).
 | `detect.produces`    | how to read the output: integer / string / exit_code / line_count |
 | `expect.predicate`   | the healthy rule (less_than, equals, exit_zero, regex_match…) |
 | `risk`               | safe / moderate / destructive — drives confirmation & snapshots |
-| `requires_privilege` | needs sudo/admin                                             |
+| `requires_privilege` | the *fix* needs sudo/admin — detect never does                |
 | `reverse.strategy`   | how to undo: `command` / `snapshot_only` / `none`            |
 | `reverse.command`    | the undo command(s), keyed by distro — required for `command` |
 | `fix.<distro>`       | vetted fix command, keyed by distro (or `default`)          |
@@ -79,13 +88,16 @@ outright (try `--validate-only` against a broken file to see it bite).
   (You vet the actual fix commands; you've run them on real machines.)
 - **Engine** — the detect→evaluate→diagnose loop (this file). Distro-agnostic,
   testable on Ubuntu.
-- **Safety layer** — confirmation, snapshot-before-destructive, logging,
-  reversibility. Wraps fix execution; not built yet.
-- **Matcher (LLM)** — maps a free-text complaint to candidate playbooks using
-  `symptoms`. Retrieval, not authoring. Plugs in above the engine.
+- **Safety layer** — confirmation, logging, reversibility. Wraps fix
+  execution; built, but see the status note above. Snapshot-before-destructive
+  is still a gate that refuses rather than a mechanism that runs.
+- **Matcher** — maps a free-text complaint to candidate playbooks using
+  `symptoms`. Deterministic keyword matching in the MVP; retrieval, never
+  authoring. Plugs in above the engine.
 - **CLI/TUI** — plain-language in, readable status out.
 
 ## Not built yet (on purpose)
 
-Fix execution, the safety layer, the LLM matcher, Fedora/Windows fix
-*verification* (needs real machines), and the fleet dashboard.
+Snapshots (the gate refuses destructive fixes rather than guessing a
+mechanism), the matcher, the CLI/TUI, Fedora/Windows fix *verification* (needs
+real machines), and the fleet dashboard.

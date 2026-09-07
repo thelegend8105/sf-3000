@@ -13,7 +13,7 @@ expect:
   predicate: equals
   value: 0                    # healthy = no failed units
 risk: safe
-requires_privilege: false
+requires_privilege: true      # reset-failed on system units goes through polkit
 reverse:
   strategy: none             # clears the failed-state flag; no meaningful undo
 fix:

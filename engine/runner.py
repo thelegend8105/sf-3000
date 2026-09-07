@@ -48,6 +48,7 @@ FIX_TIMEOUT = 600      # apt-get install on a slow VM is not
 HEALED = "healed"                    # fix ran, predicate flipped
 FIX_FAILED = "fix_failed"            # fix errored, nothing undone
 VERIFY_FAILED = "verify_failed"      # fix ran, predicate did not flip, nothing undone
+VERIFY_ERROR = "verify_error"        # fix ran, verify could not measure — state unknown
 ROLLED_BACK = "rolled_back"          # undo ran and succeeded
 ROLLBACK_FAILED = "rollback_failed"  # undo attempted and failed — worst case
 DECLINED = "declined"                # problem found, fix offered, human said no
@@ -330,6 +331,7 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
         "fix_command": None,
         "fix_exit_code": None,
         "verify_after": None,
+        "verify_error": None,
         "outcome": None,
         "rollback_method": None,
         "rollback_result": None,
@@ -395,12 +397,20 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
     else:
         print(f"  {MARK['arrow']} fix exited 0 — verifying")
         v_status, v_measure, v_detail = assess(pb)
-        record["verify_after"] = v_measure
         if v_status == HEALTHY:
+            record["verify_after"] = v_measure
             print(f"  {MARK['HEALTHY']} verified healthy ({v_detail})")
             record["outcome"] = HEALED
+        elif v_status == ERROR:
+            # "Could not measure" is not "still broken" — say so, and do not
+            # leave an unproven change in place (DESIGN.md section 16).
+            record["verify_error"] = v_detail
+            print(f"  {MARK['ERROR']} fix ran but verify could not measure "
+                  f"the machine ({v_detail}) — its state is unknown")
+            record["outcome"] = rollback(pb, distro, record) or VERIFY_ERROR
         else:
             # Exit 0 is not success. The predicate decides.
+            record["verify_after"] = v_measure
             print(f"  {MARK['PROBLEM']} fix ran but the machine is still "
                   f"unhealthy ({v_detail})")
             record["outcome"] = rollback(pb, distro, record) or VERIFY_FAILED

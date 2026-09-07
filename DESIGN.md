@@ -240,6 +240,8 @@ distro.
 - **Logging** — every command run (and its output) is recorded, so there's a
   trail if something goes wrong.
 - **Verify after fix** — never assume success; re-run the check to prove it.
+  A check that *errors* has not proved anything either, and is reported as
+  such rather than as a failed fix (see §16).
 
 ---
 
@@ -269,9 +271,13 @@ proactive sweep) live in the MVP.
 - **Phase 0 — Skeleton (done).** Schema + a few real playbooks + an engine that
   loads, validates, runs detects, and diagnoses. Fixes shown as dry-run only.
   Proven working on Ubuntu.
-- **Phase 1 — Safe single machine.** Add the safety layer so a confirmed,
-  logged, reversible fix can actually run and be verified. Grow the library of
-  Ubuntu playbooks from problems we've really solved. Test by making and
+- **Phase 1 — Safe single machine (written, not yet proven).** The safety
+  layer exists: a confirmed, logged, reversible fix can run and be verified.
+  But the lifecycle has not been exercised end-to-end on a real machine, so
+  `rollback()`, `log_run()` and the verify-failure branches are unrun code that
+  executes as root. `tests/rollback-proof/` is the fixture that settles this,
+  and Phase 1 is not done until it passes in a VM. Then: grow the library of
+  Ubuntu playbooks from problems we've really solved, testing by making and
   breaking throwaway VMs.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
@@ -295,15 +301,22 @@ proactive sweep) live in the MVP.
 
 ## 13. What already exists
 
-A working Phase-0 skeleton:
 - `schema/playbook.schema.json` — the rulebook (enforced; rejects bad entries).
 - `playbooks/` — three real playbooks (disk-full, failed-services,
   missing-tool).
-- `engine/runner.py` — loads, validates, runs detects, diagnoses; prints fixes
-  as dry-run only (never executes them yet).
+- `engine/runner.py` — loads, validates, identifies the machine, runs detects,
+  diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
+  P1 lifecycle: confirm, fix, verify, log, roll back.
+- `tests/rollback-proof/` — a fixture whose only job is to make the rollback
+  path actually execute.
 
-It ran on the Ubuntu test sandbox: two checks came back healthy, one flagged a
-real problem and printed (but did not run) the fix.
+**Proven:** the detect path. It ran on the Ubuntu test sandbox (two healthy,
+one real problem printed but not run), and the `applies_to` skip path reports
+SKIPPED correctly on a non-matching host.
+
+**Not proven:** everything behind `--fix`. It has never been run end-to-end on
+a real machine — there is no run log anywhere to show otherwise. Until the
+rollback proof passes in a VM, read §12 Phase 1 as in progress, not done.
 
 ---
 
@@ -422,7 +435,7 @@ rest of the engine holds to.
 
 **2026-09-05 — `rollback_failed` and `declined` are added to the run outcomes.**
 Outcomes are `healed`, `fix_failed`, `verify_failed`, `rolled_back`,
-`rollback_failed`, and `declined`.
+`rollback_failed`, and `declined` (plus `verify_error`, added below).
 
 *Why:* the original four had no way to record a failed fix whose undo *also*
 failed. That is the worst state the system can reach — the machine has been
@@ -432,11 +445,43 @@ someone reading the logs later most needs to find. The outcome field records
 the final state of the machine; the rollback method and its result are recorded
 alongside it as separate fields.
 
+**2026-09-07 — A verify that cannot measure is `verify_error`, not
+`verify_failed`.** When the post-fix check errors — a detect that timed out,
+output that will not parse — the engine records outcome `verify_error`, puts
+the reason in a `verify_error` field, leaves `verify_after` null, and undoes
+the fix as it would for a verify that came back unhealthy.
+
+*Why:* "the machine is still unhealthy" and "we could not tell" are different
+facts, and only the first is a measurement. Conflating them printed a
+confident wrong cause and wrote `verify_after: null` with outcome
+`verify_failed` — indistinguishable in the log from a verify that genuinely
+measured nothing. The change is still undone rather than left in place: §10's
+rule is to *prove* recovery, and an unproven change sitting on a machine whose
+state is unknown is precisely what rollback exists to prevent. Undoing returns
+it to the state detect actually measured.
+
+**2026-09-07 — `requires_privilege` describes the fix, not the detect.** The
+flag is playbook-level, but the engine consults it only before running a fix;
+detects remain runnable unprivileged either way. `failed-systemd-units` had it
+set `false` on the strength of its detect, while its fix
+(`systemctl reset-failed`) goes through polkit and fails without root.
+
+*Why:* this flag is what the never-escalate guard reads, so setting it from the
+detect's needs quietly disarmed that guard. Instead of "re-run under sudo", the
+fix ran, exited 1, found `reverse.strategy: none` and reported `fix_failed` —
+safe, but the wrong cause, and the user is told the fix is broken rather than
+that they need privilege. A field that claims something untrue about a vetted
+command is exactly the library-trust risk §11 names, so the schema now records
+which half of the playbook the flag governs.
+
 ---
 
-*Last updated: revision 4 — added §16 (decisions log) recording the schema v2
-model, the privilege and rollback-outcome decisions of 2026-09-05, and brought
-§10 in line with the `reverse` block. Revision 3 — reconciled with the rough-plan sketch. The AI agent
+*Last updated: revision 5 — reconciled §12/§13 with the code (the P1 fix
+lifecycle exists but is unproven, and §13 now separates what is proven from
+what is not), and recorded the `verify_error` and `requires_privilege`
+decisions of 2026-09-07. Revision 4 — added §16 (decisions log) recording the
+schema v2 model, the privilege and rollback-outcome decisions of 2026-09-05,
+and brought §10 in line with the `reverse` block. Revision 3 — reconciled with the rough-plan sketch. The AI agent
 is now a "perhaps introduce novelty" direction, not part of the MVP; MVP
 complaint-matching is deterministic (no AI); roadmap split into Build-Out-MVP
 and Perhaps-Introduce-Novelty to mirror the sketch. Open questions (§15) left
