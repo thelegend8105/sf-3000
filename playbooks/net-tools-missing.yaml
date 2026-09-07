@@ -23,4 +23,4 @@ fix:
   fedora: "dnf install -y net-tools"
 verify:
   rerun: detect
-source: "internal — demo playbook, tested on Ubuntu 24.04"
+source: "internal — demo playbook. detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 and 2026-09-07, commit 2ef3c6d; outcome healed both times. The reverse command has never run. VM carried prior state, not a clean-baseline revert."

@@ -1,6 +1,10 @@
-# CANDIDATE - not yet vetted. Lives in candidates/ so a normal sweep never
-# loads it. Run explicitly:
-#   sudo python3 engine/runner.py --playbooks candidates --fix boot-partition-full
+# BLAST RADIUS: `apt-get autoremove --purge` is NOT kernel-scoped. It removes
+# every auto-installed package that is no longer required and purges its
+# config. On a near-clean 26.04 VM this was kernels only - 15 packages,
+# confirmed with `apt-get -s autoremove --purge` before the run - and Ubuntu's
+# kernel autoremoval policy retained the running kernel AND one fallback. On a
+# machine with more accumulated packages it will take more, and purged config
+# is not "regenerable state". Run the -s simulation before trusting it there.
 #
 # Detect differs from the spreadsheet sketch (`df -P /boot`) on purpose: when
 # /boot is NOT a separate mount, `df /boot` measures the ROOT filesystem, so a
@@ -26,9 +30,9 @@ expect:
 risk: moderate
 requires_privilege: true
 reverse:
-  strategy: none             # removes only superseded kernels, re-installable from the archive
+  strategy: none             # kernels come back from the archive; see BLAST RADIUS above
 fix:
   ubuntu: "apt-get autoremove --purge -y"
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Sketch from sf3000-fixable-problems.xlsx (Ubuntu sheet, boot-partition-full). Replace once a VM run fills in 'Tested on'."
+source: "internal - detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-07, commit 2ef3c6d: 100% -> 76%, outcome healed. /boot was 2.0G ext4 on /dev/sda2; the condition was INDUCED WITH A FILLER FILE because a 2G /boot does not fill naturally - the real-world case is a 512M /boot. Simulation proposed 15 packages, all kernel (7.0.0-14,15,22,27,28); running kernel -30 and fallback -29 retained. Blast radius on a machine with more auto-installed packages is NOT vetted."

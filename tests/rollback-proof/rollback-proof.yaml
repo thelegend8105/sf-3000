@@ -31,4 +31,4 @@ fix:
   ubuntu: "apt-get install -y cowsay"   # wrong package on purpose: exits 0, heals nothing
 verify:
   rerun: detect
-source: "internal - test fixture, not a vetted repair"
+source: "internal - test fixture, not a vetted repair. Rollback path proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 (commit 0d7551d) and 2026-09-07 (commit 2ef3c6d); outcome rolled_back, rollback exit 0 both times."
