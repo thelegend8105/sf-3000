@@ -1,3 +1,14 @@
+# ORDERING: the journal vacuum runs FIRST on purpose. The two halves reclaim
+# independently and neither needs the other, but `journalctl --vacuum-time`
+# takes no apt lock while `apt-get clean` does. With the apt half first, lock
+# contention from unattended-upgrades forfeited BOTH reclaims (observed on the
+# VM 2026-09-07, exit 100). This way a blocked apt still leaves the journal
+# space banked, while `&&` still propagates the real exit code so the run is
+# reported honestly instead of masked by a succeeding second command.
+#
+# The fedora key is currently unreachable - applies_to.distros is [ubuntu], so
+# the engine refuses before pick_fix reads it. Left untouched rather than
+# silently edited alongside a command nobody has vetted on Fedora.
 id: disk-root-near-full
 description: Root filesystem is critically low on free space
 applies_to:
@@ -17,8 +28,8 @@ requires_privilege: true
 reverse:
   strategy: none             # only reclaims apt cache + old journals; nothing worth undoing
 fix:
-  ubuntu: "apt-get clean && journalctl --vacuum-time=7d"
+  ubuntu: "journalctl --vacuum-time=7d && apt-get -o DPkg::Lock::Timeout=60 clean"
   fedora: "dnf clean all && journalctl --vacuum-time=7d"
 verify:
   rerun: detect
-source: "internal — tested on Ubuntu 22.04/24.04, Fedora 40"
+source: "internal - UNVETTED as of 2026-09-08: no part of this playbook has completed a run on any machine. The only real attempt (Ubuntu 26.04 LTS, 2026-09-07) never reached the fix - unattended-upgrades held /var/cache/apt/archives/lock and apt exited 100, so neither half of the reclaim ran. The previous 'tested on Ubuntu 22.04/24.04, Fedora 40' line was inherited from the sketch and was never true of this entry. The fix was reordered and given DPkg::Lock::Timeout on 2026-09-08 and has not run anywhere; that the timeout covers the ARCHIVES lock specifically - not just the dpkg frontend lock it is usually documented against - is the thing the next VM run must prove."

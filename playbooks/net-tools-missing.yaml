@@ -16,11 +16,11 @@ requires_privilege: true
 reverse:
   strategy: command          # cleanly undoable: just remove the package again
   command:
-    ubuntu: "apt-get remove -y net-tools"
+    ubuntu: "apt-get -o DPkg::Lock::Timeout=60 remove -y net-tools"
     fedora: "dnf remove -y net-tools"
 fix:
-  ubuntu: "apt-get install -y net-tools"
+  ubuntu: "apt-get -o DPkg::Lock::Timeout=60 install -y net-tools"
   fedora: "dnf install -y net-tools"
 verify:
   rerun: detect
-source: "internal — demo playbook. detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 and 2026-09-07, commit 2ef3c6d; outcome healed both times. The reverse command has never run. VM carried prior state, not a clean-baseline revert."
+source: "internal — demo playbook. detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 and 2026-09-07, commit 2ef3c6d; outcome healed both times. The reverse command has never run. VM carried prior state, not a clean-baseline revert. DPkg::Lock::Timeout=60 was added to both the fix and the reverse on 2026-09-08; neither amended command has been re-run, and the reverse still has not run at all."

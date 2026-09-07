@@ -477,9 +477,59 @@ that they need privilege. A field that claims something untrue about a vetted
 command is exactly the library-trust risk §11 names, so the schema now records
 which half of the playbook the flag governs.
 
+**2026-09-08 — A fix that could not START is `blocked`, not `fix_failed`, and
+nothing is rolled back.** When a package manager refuses to run because another
+process holds its lock, the engine records outcome `blocked`, puts the message
+in a `blocked_reason` field, and tells the user to wait and run it again. It
+does **not** invoke the undo. A locked *undo* is still `rollback_failed` — the
+machine really does still carry the unproven change — but its
+`rollback_result` is marked `blocked (retryable)` and the user is given the
+undo command to re-run.
+
+*Why:* this is the third instance of the same conflation §16 has now corrected
+twice — *could not do it* reported as *did it and it did not work*. Hit for
+real on the VM on 2026-09-07: `unattended-upgrades` held
+`/var/cache/apt/archives/lock`, apt exited 100 before doing anything, and the
+engine told a non-technical user their machine "needs manual attention" when
+the truth was "wait ninety seconds". It affects every apt-based playbook, and
+on real machines the Software Updater causes it just as readily.
+
+Skipping the rollback is the load-bearing half. A blocked fix changed nothing,
+so an undo would not be a reversal — it would be the run's only modification to
+the machine. For `net-tools-missing` the undo is `apt-get remove -y net-tools`,
+which would strip a package the run never installed and the user may have had
+all along: the engine would break a machine it was asked to check. Detection is
+deliberately narrow, matching the lock message rather than apt's exit 100, which
+it also returns for genuine failures; an unrecognised lock message falls through
+to `fix_failed`, which is the safe direction to be wrong in.
+
+The vetted commands were amended in the same change, which is a §4 edit and was
+approved as one: `-o DPkg::Lock::Timeout=60` makes apt wait for the lock rather
+than fail instantly, in `disk-root-near-full`, `boot-partition-full` and both
+halves of `net-tools-missing`. The two mechanisms are complements — the timeout
+makes contention rare, `blocked` makes it honest when it happens anyway, and
+only `blocked` covers the rollback path. That the timeout covers the *archives*
+lock specifically, and not only the dpkg frontend lock it is usually documented
+against, is unproven and is what the next VM run must establish.
+
+**2026-09-08 — `disk-root-near-full` reclaims the journal before the apt
+cache.** Its fix is now `journalctl --vacuum-time=7d && apt-get -o
+DPkg::Lock::Timeout=60 clean`.
+
+*Why:* the two halves reclaim independently and neither needs the other, but
+only `apt-get clean` takes a lock. With apt first, the 2026-09-07 lock
+contention forfeited *both* reclaims, including the journal vacuum that would
+have succeeded untouched. Reordering costs nothing when the fix works — the
+total reclaim is identical — and banks the lock-free half when it does not.
+`&&` is kept rather than `;` so a blocked apt still propagates a non-zero exit:
+with `;` the exit code would be `journalctl`'s, the engine would log
+`fix_exit_code: 0` for a run where apt never ran, and a partial failure would
+be invisible in the log.
+
 ---
 
-*Last updated: revision 6 — corrected §12/§13, which revision 5 wrongly
+*Last updated: revision 7 — recorded the `blocked` outcome and the apt-lock
+command amendments of 2026-09-08. Revision 6 — corrected §12/§13, which revision 5 wrongly
 recorded as "never run end-to-end": the run log in the VM shows the rollback
 proof passing on 2026-09-05, minutes after the fixture was committed, and again
 on 2026-09-07. Revision 5 — reconciled §12/§13 with the code and recorded the

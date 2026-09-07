@@ -32,7 +32,7 @@ requires_privilege: true
 reverse:
   strategy: none             # kernels come back from the archive; see BLAST RADIUS above
 fix:
-  ubuntu: "apt-get autoremove --purge -y"
+  ubuntu: "apt-get -o DPkg::Lock::Timeout=60 autoremove --purge -y"
 verify:
   rerun: detect
-source: "internal - detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-07, commit 2ef3c6d: 100% -> 76%, outcome healed. /boot was 2.0G ext4 on /dev/sda2; the condition was INDUCED WITH A FILLER FILE because a 2G /boot does not fill naturally - the real-world case is a 512M /boot. Simulation proposed 15 packages, all kernel (7.0.0-14,15,22,27,28); running kernel -30 and fallback -29 retained. Blast radius on a machine with more auto-installed packages is NOT vetted."
+source: "internal - detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-07, commit 2ef3c6d: 100% -> 76%, outcome healed. /boot was 2.0G ext4 on /dev/sda2; the condition was INDUCED WITH A FILLER FILE because a 2G /boot does not fill naturally - the real-world case is a 512M /boot. Simulation proposed 15 packages, all kernel (7.0.0-14,15,22,27,28); running kernel -30 and fallback -29 retained. Blast radius on a machine with more auto-installed packages is NOT vetted. DPkg::Lock::Timeout=60 was added 2026-09-08 after the apt-lock defect; the reclaim behaviour above is unchanged, but the amended command has not itself been re-run."

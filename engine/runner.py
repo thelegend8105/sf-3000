@@ -52,6 +52,33 @@ VERIFY_ERROR = "verify_error"        # fix ran, verify could not measure — sta
 ROLLED_BACK = "rolled_back"          # undo ran and succeeded
 ROLLBACK_FAILED = "rollback_failed"  # undo attempted and failed — worst case
 DECLINED = "declined"                # problem found, fix offered, human said no
+BLOCKED = "blocked"                  # fix could not START — retryable, machine untouched
+
+# "Could not start" is not "ran and did not work" — the same conflation the
+# verify_error outcome closed. A package manager whose lock is held by
+# unattended-upgrades or the Software Updater has changed nothing, and the
+# correct advice is to wait, not to call for manual attention.
+#
+# Matched on the MESSAGE, never on the exit code alone: apt exits 100 for
+# genuine failures too, and a false "blocked" would tell someone to sit and
+# wait while their machine actually needs help. Narrow on purpose — an
+# unrecognised lock message falls through to fix_failed, which is the safe
+# direction to be wrong in.
+LOCK_CONTENTION_PATTERNS = (
+    "could not get lock",
+    "unable to acquire the dpkg frontend lock",
+    "unable to lock the administration directory",
+    "unable to lock directory",
+    "waiting for cache lock",
+    "failed to obtain the transaction lock",   # dnf
+)
+
+
+def is_lock_contention(*streams) -> bool:
+    """True when a package manager refused to start because its lock is held."""
+    blob = " ".join(s for s in streams if s).lower()
+    return any(pattern in blob for pattern in LOCK_CONTENTION_PATTERNS)
+
 
 try:  # keep the tick/cross glyphs from crashing a cp1252 console (Windows)
     sys.stdout.reconfigure(encoding="utf-8")
@@ -294,13 +321,23 @@ def rollback(pb: dict, distro: str, record: dict):
         return ROLLBACK_FAILED
 
     print(f"  {MARK['arrow']} rolling back: {undo}")
-    code, _out, err = run_command(undo, FIX_TIMEOUT)
+    code, out, err = run_command(undo, FIX_TIMEOUT)
     record["rollback_command"] = undo
     record["rollback_exit_code"] = code
     if code == 0:
         record["rollback_result"] = "ok"
         print(f"  {MARK['arrow']} rollback succeeded")
         return ROLLED_BACK
+    if is_lock_contention(out, err):
+        # Still rollback_failed — the machine really does still carry the
+        # unproven change. But the undo is retryable, and "run this again in a
+        # minute" is a different instruction from "you are on your own".
+        record["rollback_result"] = f"blocked (retryable): {err or code}"
+        print(f"  {MARK['arrow']} ROLLBACK BLOCKED — another process holds the "
+              "package manager lock")
+        print(f"  {MARK['arrow']} the change is still in place. Once that "
+              f"process finishes, undo it with:  {undo}")
+        return ROLLBACK_FAILED
     record["rollback_result"] = f"failed: {err or code}"
     print(f"  {MARK['arrow']} ROLLBACK FAILED ({err or code})")
     return ROLLBACK_FAILED
@@ -332,6 +369,7 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
         "fix_exit_code": None,
         "verify_after": None,
         "verify_error": None,
+        "blocked_reason": None,
         "outcome": None,
         "rollback_method": None,
         "rollback_result": None,
@@ -387,11 +425,22 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
     record["confirmed"] = True
 
     print(f"\n  {MARK['arrow']} running: {fix_cmd}")
-    code, _out, err = run_command(fix_cmd, FIX_TIMEOUT)
+    code, out, err = run_command(fix_cmd, FIX_TIMEOUT)
     record["fix_command"] = fix_cmd
     record["fix_exit_code"] = code
 
-    if code != 0:
+    if code != 0 and is_lock_contention(out, err):
+        # The fix never started, so the machine is unchanged — and an undo here
+        # would be a change, not a reversal. For net-tools-missing that undo is
+        # `apt-get remove -y net-tools`, which would remove a package this run
+        # never installed and the user may have had all along.
+        record["blocked_reason"] = err or out or f"exit={code}"
+        record["outcome"] = BLOCKED
+        print(f"  {MARK['arrow']} could not start: another process is using "
+              "the package manager")
+        print(f"  {MARK['arrow']} nothing was changed. Wait for it to finish "
+              "(usually a minute or two) and run this again.")
+    elif code != 0:
         print(f"  {MARK['arrow']} fix failed (exit={code}) {err}")
         record["outcome"] = rollback(pb, distro, record) or FIX_FAILED
     else:

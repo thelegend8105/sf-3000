@@ -9,9 +9,11 @@ to *match and explain*, never to author commands that touch a machine.
 
 ```
 schema/playbook.schema.json   the contract every playbook must satisfy
-playbooks/*.yaml              three real, vetted entries
+playbooks/*.yaml              four real, vetted entries
+candidates/*.yaml             proposed entries, not yet vetted — never loaded
 engine/runner.py              the engine: validate, detect, diagnose, fix
 tests/rollback-proof/         a fixture that exercises the rollback path
+tests/blocked-proof/          an offline proof of the `blocked` branch
 ```
 
 By default the engine is **read-only**. It runs each playbook's `detect`
@@ -25,8 +27,13 @@ the machine is touched.
 > **Status: the fix lifecycle's main paths are proven.** `tests/rollback-proof/`
 > has run green in a VM — a fix that exits 0 without flipping the predicate is
 > caught and undone (`outcome: rolled_back`) — alongside a real repair that
-> heals. Still unexercised outside a test harness: `declined`, `fix_failed`,
-> `rollback_failed`, `verify_error`, and the snapshot-gate refusal.
+> heals. `fix_failed` and the `reverse: none` branch were exercised for real on
+> 2026-09-07, by an apt lock rather than by design. Still unexercised on a real
+> machine: `declined`, `rollback_failed`, `verify_error`, `blocked` (proven
+> offline in `tests/blocked-proof/`), and the snapshot-gate refusal.
+>
+> **`disk-root-near-full` has never completed a run anywhere** — see its
+> `source:` line. It is the next thing to earn provenance.
 
 ## Run it
 
