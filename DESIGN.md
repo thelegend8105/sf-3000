@@ -271,14 +271,14 @@ proactive sweep) live in the MVP.
 - **Phase 0 — Skeleton (done).** Schema + a few real playbooks + an engine that
   loads, validates, runs detects, and diagnoses. Fixes shown as dry-run only.
   Proven working on Ubuntu.
-- **Phase 1 — Safe single machine (written, not yet proven).** The safety
-  layer exists: a confirmed, logged, reversible fix can run and be verified.
-  But the lifecycle has not been exercised end-to-end on a real machine, so
-  `rollback()`, `log_run()` and the verify-failure branches are unrun code that
-  executes as root. `tests/rollback-proof/` is the fixture that settles this,
-  and Phase 1 is not done until it passes in a VM. Then: grow the library of
-  Ubuntu playbooks from problems we've really solved, testing by making and
-  breaking throwaway VMs.
+- **Phase 1 — Safe single machine (main paths proven).** The safety layer
+  exists and works: `tests/rollback-proof/` has run green in a VM — a fix that
+  exits 0 without flipping the predicate is caught and undone — alongside a
+  real repair that heals. Remaining: exercise the outcome branches a passing
+  run never reaches (`declined`, `fix_failed`, `rollback_failed`,
+  `verify_error`, the snapshot-gate refusal), give the fixture a problem of its
+  own so it stops being single-shot and order-dependent, and grow the library
+  of Ubuntu playbooks from problems we've really solved.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
   map out commands + use cases and review competitor apps to keep growing the
@@ -310,13 +310,16 @@ proactive sweep) live in the MVP.
 - `tests/rollback-proof/` — a fixture whose only job is to make the rollback
   path actually execute.
 
-**Proven:** the detect path. It ran on the Ubuntu test sandbox (two healthy,
-one real problem printed but not run), and the `applies_to` skip path reports
-SKIPPED correctly on a non-matching host.
+**Proven on a real machine:** the detect path, including SKIPPED reporting on
+a non-matching host; and the fix lifecycle's main outcomes — `healed` and
+`rolled_back`, the latter reached through the verify-failure branch that
+triggers the undo. The evidence is `logs/runs.jsonl` in the VM. That file is
+gitignored, so it exists only on the machine that ran it — which is why its
+absence on a dev box is not evidence of anything.
 
-**Not proven:** everything behind `--fix`. It has never been run end-to-end on
-a real machine — there is no run log anywhere to show otherwise. Until the
-rollback proof passes in a VM, read §12 Phase 1 as in progress, not done.
+**Not proven:** the outcome branches a passing run never reaches — `declined`,
+`fix_failed`, `rollback_failed`, `verify_error` — and the snapshot gate, which
+has nothing to gate on until the snapshot layer is built.
 
 ---
 
@@ -476,10 +479,11 @@ which half of the playbook the flag governs.
 
 ---
 
-*Last updated: revision 5 — reconciled §12/§13 with the code (the P1 fix
-lifecycle exists but is unproven, and §13 now separates what is proven from
-what is not), and recorded the `verify_error` and `requires_privilege`
-decisions of 2026-09-07. Revision 4 — added §16 (decisions log) recording the
+*Last updated: revision 6 — corrected §12/§13, which revision 5 wrongly
+recorded as "never run end-to-end": the run log in the VM shows the rollback
+proof passing on 2026-09-05, minutes after the fixture was committed, and again
+on 2026-09-07. Revision 5 — reconciled §12/§13 with the code and recorded the
+`verify_error` and `requires_privilege` decisions of 2026-09-07. Revision 4 — added §16 (decisions log) recording the
 schema v2 model, the privilege and rollback-outcome decisions of 2026-09-05,
 and brought §10 in line with the `reverse` block. Revision 3 — reconciled with the rough-plan sketch. The AI agent
 is now a "perhaps introduce novelty" direction, not part of the MVP; MVP

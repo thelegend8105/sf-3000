@@ -22,10 +22,11 @@ Passing `--fix <id>` opts one playbook into the full lifecycle — confirm, fix,
 verify, log, and roll back if the fix does not prove itself. Nothing else on
 the machine is touched.
 
-> **Status: the fix lifecycle is written but not yet proven.** Every step of it
-> exists and is reviewed, but the path has not been exercised end-to-end on a
-> real machine, so treat Phase 1 as unfinished. `tests/rollback-proof/` is the
-> fixture that closes this out; see DESIGN.md §12.
+> **Status: the fix lifecycle's main paths are proven.** `tests/rollback-proof/`
+> has run green in a VM — a fix that exits 0 without flipping the predicate is
+> caught and undone (`outcome: rolled_back`) — alongside a real repair that
+> heals. Still unexercised outside a test harness: `declined`, `fix_failed`,
+> `rollback_failed`, `verify_error`, and the snapshot-gate refusal.
 
 ## Run it
 
