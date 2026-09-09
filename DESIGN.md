@@ -302,24 +302,28 @@ proactive sweep) live in the MVP.
 ## 13. What already exists
 
 - `schema/playbook.schema.json` — the rulebook (enforced; rejects bad entries).
-- `playbooks/` — three real playbooks (disk-full, failed-services,
-  missing-tool).
+- `playbooks/` — four real playbooks (disk-full, failed-services,
+  missing-tool, boot-partition-full); `candidates/` holds proposed entries the
+  engine never loads.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, verify, log, roll back.
 - `tests/rollback-proof/` — a fixture whose only job is to make the rollback
   path actually execute.
+- `tests/blocked-proof/` — an offline proof of the `blocked` branch.
 
 **Proven on a real machine:** the detect path, including SKIPPED reporting on
 a non-matching host; and the fix lifecycle's main outcomes — `healed` and
 `rolled_back`, the latter reached through the verify-failure branch that
-triggers the undo. The evidence is `logs/runs.jsonl` in the VM. That file is
+triggers the undo. `fix_failed` and the `reverse: none` branch were reached on
+2026-09-07 by an apt lock rather than by design, and `blocked` on 2026-09-09
+with that lock held deliberately. The evidence is `logs/runs.jsonl` in the VM. That file is
 gitignored, so it exists only on the machine that ran it — which is why its
 absence on a dev box is not evidence of anything.
 
 **Not proven:** the outcome branches a passing run never reaches — `declined`,
-`fix_failed`, `rollback_failed`, `verify_error` — and the snapshot gate, which
-has nothing to gate on until the snapshot layer is built.
+`rollback_failed`, `verify_error` — and the snapshot gate, which has nothing to
+gate on until the snapshot layer is built.
 
 ---
 
@@ -510,11 +514,14 @@ halves of `net-tools-missing`. The two mechanisms are complements — the timeou
 makes contention rare, `blocked` makes it honest when it happens anyway, and
 only `blocked` covers the rollback path. That the timeout covers the *archives*
 lock specifically, and not only the dpkg frontend lock it is usually documented
-against, is unproven and is what the next VM run must establish.
+against, was unproven when this was written — the 2026-09-09 entry below records
+the run that disproved it, and with it the "complements" claim in this
+paragraph.
 
 **2026-09-08 — `disk-root-near-full` reclaims the journal before the apt
-cache.** Its fix is now `journalctl --vacuum-time=7d && apt-get -o
-DPkg::Lock::Timeout=60 clean`.
+cache.** Its fix is now `journalctl --vacuum-time=7d && apt-get clean` (the
+`-o DPkg::Lock::Timeout=60` this entry originally carried was dropped on
+2026-09-09; see below).
 
 *Why:* the two halves reclaim independently and neither needs the other, but
 only `apt-get clean` takes a lock. With apt first, the 2026-09-07 lock
@@ -526,10 +533,39 @@ with `;` the exit code would be `journalctl`'s, the engine would log
 `fix_exit_code: 0` for a run where apt never ran, and a partial failure would
 be invisible in the log.
 
+**2026-09-09 — `DPkg::Lock::Timeout` does not cover the apt *archives* lock. The
+flag is dropped from `disk-root-near-full` and kept, with its limit recorded, on
+the other two.** Measured on the VM: with `/var/cache/apt/archives/lock` held for
+90 seconds against a 60-second timeout, `apt-get clean` failed instantly instead
+of waiting. The option governs the dpkg lock. The archives lock is a different
+lock, and it is the one `unattended-upgrades` takes first.
+
+*Why it matters:* the 2026-09-08 entry called the timeout and `blocked`
+complements — "the timeout makes contention rare, `blocked` makes it honest when
+it happens anyway". Half of that is now false. Nothing makes apt wait for the
+lock that actually fails, so contention is exactly as common as it was on
+2026-09-07, and `blocked` is not a complement but the entire mechanism. The same
+run vetted it: outcome `blocked`, correct advice, no rollback, on a real machine.
+
+The flag is removed from `disk-root-near-full`, whose only apt command is
+`apt-get clean` — proven decorative there, and a decorative option inside a
+vetted command is the §11 trust problem in miniature. It stays on
+`boot-partition-full` and both halves of `net-tools-missing`, whose commands do
+take the dpkg lock as well, where it can still help and cannot hurt; each
+`source:` now records that it does nothing against an archives-lock holder.
+
+`blocked`'s user-facing message was corrected in the same change. It said
+"nothing was changed", which the journal-first reorder had made false —
+`journalctl --vacuum-time=7d` runs and succeeds before apt is reached. It now
+says the package manager never ran and changed nothing, which is the claim the
+engine can actually stand behind.
+
 ---
 
-*Last updated: revision 7 — recorded the `blocked` outcome and the apt-lock
-command amendments of 2026-09-08. Revision 6 — corrected §12/§13, which revision 5 wrongly
+*Last updated: revision 8 — recorded the 2026-09-09 VM result:
+`DPkg::Lock::Timeout` does not cover the apt archives lock, and `blocked` earned
+its first real-machine run; reconciled §13 with it. Revision 7 — recorded the
+`blocked` outcome and the apt-lock command amendments of 2026-09-08. Revision 6 — corrected §12/§13, which revision 5 wrongly
 recorded as "never run end-to-end": the run log in the VM shows the rollback
 proof passing on 2026-09-05, minutes after the fixture was committed, and again
 on 2026-09-07. Revision 5 — reconciled §12/§13 with the code and recorded the

@@ -28,12 +28,13 @@ the machine is touched.
 > has run green in a VM — a fix that exits 0 without flipping the predicate is
 > caught and undone (`outcome: rolled_back`) — alongside a real repair that
 > heals. `fix_failed` and the `reverse: none` branch were exercised for real on
-> 2026-09-07, by an apt lock rather than by design. Still unexercised on a real
-> machine: `declined`, `rollback_failed`, `verify_error`, `blocked` (proven
-> offline in `tests/blocked-proof/`), and the snapshot-gate refusal.
+> 2026-09-07, by an apt lock rather than by design, and `blocked` on 2026-09-09
+> with that lock held deliberately. Still unexercised on a real machine:
+> `declined`, `rollback_failed`, `verify_error`, and the snapshot-gate refusal.
 >
 > **`disk-root-near-full` has never completed a run anywhere** — see its
-> `source:` line. It is the next thing to earn provenance.
+> `source:` line. Both attempts were stopped by the apt lock before the reclaim
+> ran. It is the next thing to earn provenance.
 
 ## Run it
 

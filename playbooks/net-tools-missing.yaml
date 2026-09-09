@@ -23,4 +23,4 @@ fix:
   fedora: "dnf install -y net-tools"
 verify:
   rerun: detect
-source: "internal — demo playbook. detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 and 2026-09-07, commit 2ef3c6d; outcome healed both times. The reverse command has never run. VM carried prior state, not a clean-baseline revert. DPkg::Lock::Timeout=60 was added to both the fix and the reverse on 2026-09-08; neither amended command has been re-run, and the reverse still has not run at all."
+source: "internal — demo playbook. detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 and 2026-09-07, commit 2ef3c6d; outcome healed both times. The reverse command has never run. VM carried prior state, not a clean-baseline revert. DPkg::Lock::Timeout=60 was added to both the fix and the reverse on 2026-09-08 and KEPT on 2026-09-09 with a known limit: that day's VM run proved the option does not cover /var/cache/apt/archives/lock, so it helps only when dpkg itself is busy - a case never tested here. Neither amended command has been re-run, and the reverse still has not run at all."

@@ -47,7 +47,7 @@ def playbook(strategy="none"):
         "risk": "moderate",
         "requires_privilege": False,
         "reverse": {"strategy": strategy},
-        "fix": {"ubuntu": "apt-get -o DPkg::Lock::Timeout=60 clean"},
+        "fix": {"ubuntu": "apt-get clean"},
         "verify": {"rerun": "detect"},
     }
     if strategy == "command":

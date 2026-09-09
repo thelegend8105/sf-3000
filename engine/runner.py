@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,12 +53,17 @@ VERIFY_ERROR = "verify_error"        # fix ran, verify could not measure — sta
 ROLLED_BACK = "rolled_back"          # undo ran and succeeded
 ROLLBACK_FAILED = "rollback_failed"  # undo attempted and failed — worst case
 DECLINED = "declined"                # problem found, fix offered, human said no
-BLOCKED = "blocked"                  # fix could not START — retryable, machine untouched
+BLOCKED = "blocked"                  # package manager never ran — retryable
 
 # "Could not start" is not "ran and did not work" — the same conflation the
 # verify_error outcome closed. A package manager whose lock is held by
 # unattended-upgrades or the Software Updater has changed nothing, and the
 # correct advice is to wait, not to call for manual attention.
+#
+# This outcome carries the behaviour on its own. The VM run of 2026-09-09 held
+# /var/cache/apt/archives/lock for 90s against a 60s `DPkg::Lock::Timeout` and
+# apt failed instantly: the option does not cover that lock, so nothing makes
+# apt wait for the lock unattended-upgrades actually takes. See DESIGN.md §16.
 #
 # Matched on the MESSAGE, never on the exit code alone: apt exits 100 for
 # genuine failures too, and a false "blocked" would tell someone to sit and
@@ -287,7 +293,12 @@ def confirm(pb: dict, fix_cmd: str, snapshot: bool) -> bool:
     if strategy == "none":
         print("              (no undo — if this fails you fix it by hand)")
     print(f"  snapshot  : {'yes' if snapshot else 'no'}")
-    print(f"  source    : {pb.get('source', 'unrecorded')}")
+    # Wrapped, not printed raw: a long provenance line runs to a dozen terminal
+    # rows and pushes command/risk/undo — the things actually being authorised —
+    # up out of sight above the prompt.
+    print(textwrap.fill(pb.get("source", "unrecorded"), width=64,
+                        initial_indent="  source    : ",
+                        subsequent_indent="              "))
     print("=" * 64)
     try:
         return input("Run this fix? [y/N] ").strip().lower() == "y"
@@ -430,16 +441,22 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
     record["fix_exit_code"] = code
 
     if code != 0 and is_lock_contention(out, err):
-        # The fix never started, so the machine is unchanged — and an undo here
-        # would be a change, not a reversal. For net-tools-missing that undo is
-        # `apt-get remove -y net-tools`, which would remove a package this run
-        # never installed and the user may have had all along.
+        # The package manager never ran, so an undo here would be a change,
+        # not a reversal. For net-tools-missing that undo is `apt-get remove -y
+        # net-tools`, which would remove a package this run never installed and
+        # the user may have had all along.
+        #
+        # A compound fix may still have completed an earlier lock-free step —
+        # disk-root-near-full vacuums the journal before apt — so the message
+        # below claims only that the PACKAGE MANAGER changed nothing, never
+        # that the run as a whole did.
         record["blocked_reason"] = err or out or f"exit={code}"
         record["outcome"] = BLOCKED
         print(f"  {MARK['arrow']} could not start: another process is using "
               "the package manager")
-        print(f"  {MARK['arrow']} nothing was changed. Wait for it to finish "
-              "(usually a minute or two) and run this again.")
+        print(f"  {MARK['arrow']} the package manager never ran, so it "
+              "changed nothing. Wait for it to finish (usually a minute or "
+              "two), then run this again.")
     elif code != 0:
         print(f"  {MARK['arrow']} fix failed (exit={code}) {err}")
         record["outcome"] = rollback(pb, distro, record) or FIX_FAILED
