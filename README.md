@@ -9,11 +9,15 @@ to *match and explain*, never to author commands that touch a machine.
 
 ```
 schema/playbook.schema.json   the contract every playbook must satisfy
-playbooks/*.yaml              four real, vetted entries
-candidates/*.yaml             proposed entries, not yet vetted — never loaded
+playbooks/*.yaml              three entries, each proven on a VM
+candidates/*.yaml             proposed entries, not yet proven — run only when named
 engine/runner.py              the engine: validate, detect, diagnose, fix
-tests/rollback-proof/         a fixture that exercises the rollback path
+tests/rollback-proof/         a VM fixture that exercises the rollback path on real apt
+tests/branch-proof/           VM fixtures for the snapshot gate, declined, rollback_failed, verify_error
+tests/systemd-proof/          throwaway services for the failed-systemd-units VM run
 tests/blocked-proof/          an offline proof of the `blocked` branch
+tests/lifecycle-proof/        an offline proof of every other lifecycle branch
+docs/sf3000-tracker.xlsx      the backlog: every problem, its status, VM runs, test versions
 ```
 
 By default the engine is **read-only**. It runs each playbook's `detect`
@@ -32,13 +36,18 @@ the machine is touched.
 > with that lock held deliberately, and `verify_failed` the same day when a fix
 > exited 0 with nothing left to reclaim. Still unexercised on a real machine:
 > `declined`, `rollback_failed`, `verify_error`, and the snapshot-gate refusal.
+> Each now has a VM fixture in `tests/branch-proof/`, and all of them pass
+> offline in `tests/lifecycle-proof/`.
 >
 > **`disk-root-near-full` has now completed a run** — 2026-09-09, 92% → 86%,
 > outcome `healed`, after two attempts the apt lock stopped first. Its reclaim
 > is the apt cache and journals older than 7 days only: it does not touch user
 > data and will not rescue a disk filled by the user's own files.
-> `failed-systemd-units` is the only entry whose fix has still never run
-> anywhere.
+>
+> **`failed-systemd-units` left the library on 2026-10-02.** Its old fix
+> cleared the very flag its detect counted, so it could report `healed` on a
+> broken machine. It is back in `candidates/` with a restart-based fix that
+> has not run yet.
 
 ## Run it
 
@@ -48,6 +57,10 @@ pip install pyyaml jsonschema --break-system-packages
 python3 engine/runner.py                    # detect + diagnose everything
 python3 engine/runner.py --validate-only    # check the library, run nothing
 sudo python3 engine/runner.py --fix <id>    # actually fix one problem (asks first)
+
+python3 engine/runner.py --playbooks candidates   # include unproven entries
+python3 tests/blocked-proof/test_blocked.py       # offline branch proofs —
+python3 tests/lifecycle-proof/test_outcomes.py    #   no VM needed, run anywhere
 ```
 
 The engine works out what machine it is on by itself — the OS from the
@@ -80,6 +93,7 @@ exit code zero, …).
 | `reverse.command`    | the undo command(s), keyed by distro — required for `command` |
 | `fix.<distro>`       | vetted fix command, keyed by distro (or `default`)          |
 | `verify.rerun`       | re-run detect after a fix to *prove* recovery — **mandatory whenever `fix` is present** |
+| `verify.settle_seconds` | wait this long after the fix, then re-check once — for effects that take time or may not hold |
 | `source`             | provenance — who vetted it and where it was tested          |
 
 The library is the trust anchor: entries that fail the schema are rejected

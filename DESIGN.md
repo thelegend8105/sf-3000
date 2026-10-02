@@ -21,7 +21,8 @@ of it.
 
 ## 2. Why we're building it (motivation)
 
-- Our lab systems ran an already end-of-support (EOS) version of Ubuntu. A
+- Our lab systems ran an already end-of-support (EOS) version of Ubuntu
+  (22.10, Kinetic Kudu — end of life 2023-07-20). A
   full upgrade would have taken more time than we had, so we had to *downgrade
   packages* to get things working with our programs — a fiddly, manual fix done
   under time pressure.
@@ -274,11 +275,13 @@ proactive sweep) live in the MVP.
 - **Phase 1 — Safe single machine (main paths proven).** The safety layer
   exists and works: `tests/rollback-proof/` has run green in a VM — a fix that
   exits 0 without flipping the predicate is caught and undone — alongside a
-  real repair that heals. Remaining: exercise the outcome branches a passing
-  run never reaches (`declined`, `fix_failed`, `rollback_failed`,
-  `verify_error`, the snapshot-gate refusal), give the fixture a problem of its
-  own so it stops being single-shot and order-dependent, and grow the library
-  of Ubuntu playbooks from problems we've really solved.
+  real repair that heals. Remaining: run the VM fixtures in
+  `tests/branch-proof/` for the branches a passing run never reaches
+  (`declined`, `rollback_failed`, `verify_error`, the snapshot-gate refusal —
+  all already proven offline), prove the reworked `failed-systemd-units` and
+  `eos-release-dead-repos`, and grow the library of Ubuntu playbooks from
+  problems we've really solved. The test releases are in
+  `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
   map out commands + use cases and review competitor apps to keep growing the
@@ -302,15 +305,22 @@ proactive sweep) live in the MVP.
 ## 13. What already exists
 
 - `schema/playbook.schema.json` — the rulebook (enforced; rejects bad entries).
-- `playbooks/` — four real playbooks (disk-full, failed-services,
-  missing-tool, boot-partition-full); `candidates/` holds proposed entries the
-  engine never loads.
+- `playbooks/` — three playbooks, each proven on a VM (disk-full,
+  missing-tool, boot-partition-full); `candidates/` holds proposed entries,
+  including failed-services, that run only when named.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
-  P1 lifecycle: confirm, fix, verify, log, roll back.
+  P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
 - `tests/rollback-proof/` — a fixture whose only job is to make the rollback
-  path actually execute.
-- `tests/blocked-proof/` — an offline proof of the `blocked` branch.
+  path actually execute, on real apt. Repeatable since 2026-10-02.
+- `tests/branch-proof/` — VM fixtures for the snapshot gate, `declined`,
+  `rollback_failed` and `verify_error`.
+- `tests/systemd-proof/` — throwaway services for the `failed-systemd-units`
+  VM run.
+- `tests/blocked-proof/`, `tests/lifecycle-proof/` — offline proofs of every
+  lifecycle branch.
+- `docs/sf3000-tracker.xlsx` — the backlog, its status, the VM run log and the
+  Ubuntu releases to test on.
 
 **Proven on a real machine:** the detect path, including SKIPPED reporting on
 a non-matching host; and the fix lifecycle's main outcomes — `healed` and
@@ -323,9 +333,11 @@ to reclaim. The evidence is `logs/runs.jsonl` in the VM. That file is
 gitignored, so it exists only on the machine that ran it — which is why its
 absence on a dev box is not evidence of anything.
 
-**Not proven:** the outcome branches a passing run never reaches — `declined`,
-`rollback_failed`, `verify_error` — and the snapshot gate, which has nothing to
-gate on until the snapshot layer is built.
+**Not proven on a real machine:** the outcome branches a passing run never
+reaches — `declined`, `rollback_failed`, `verify_error` — and the snapshot
+gate's refusal. Each has a VM fixture waiting in `tests/branch-proof/` and
+passes offline. The gate refuses rather than snapshots: there is nothing to
+take a snapshot with until the snapshot layer is built.
 
 ---
 
@@ -562,9 +574,62 @@ take the dpkg lock as well, where it can still help and cannot hurt; each
 says the package manager never ran and changed nothing, which is the claim the
 engine can actually stand behind.
 
+**2026-10-02 — `failed-systemd-units` restarts services instead of clearing
+their flag, and leaves the library until a VM run proves it.** Its fix was
+`systemctl reset-failed`. That clears the failed flag — the very thing the
+detect counted — so the predicate flipped whether or not any service had been
+repaired. The engine could report `healed` on a machine that was still broken,
+with `reverse: none`, after erasing the one piece of evidence that something
+was wrong. The new fix restarts the failed services and checks again after a
+30-second wait.
+
+*Why restart, and why the wait:* a restarted service that stays up really is
+repaired, so the predicate describes the machine again. But for `Type=simple`
+units `systemctl restart` exits 0 as soon as the process forks, even if it dies
+a second later, so a check made straight away would accept a service that is
+about to fail. The scope is narrowed on purpose: services only, loaded units
+only, and never `Type=oneshot`, because restarting a oneshot re-runs its job,
+and for `apt-daily-upgrade.service` that job installs upgrades. Nobody agreeing
+to "restart failed services" agreed to that. A new fix that has never run does
+not belong in the trusted library (§11), so the entry moved to `candidates/`.
+It also claimed a 24.04 test that left no record, and that claim was not
+carried over.
+
+**2026-10-02 — `verify.settle_seconds`: wait, then check once.** An optional
+field (1–300). After a fix exits 0 the engine waits that long, then re-runs
+detect a single time, and records the wait in the run log. It is deliberately
+not a retry loop. A loop asks "did it ever look healthy?" — and a service that
+crashes ten seconds after starting looks healthy at second one. The question is
+whether the fix still holds after the wait.
+
+**2026-10-02 — A detect may ask a server, as long as it changes nothing on the
+machine.** `eos-release-dead-repos` decided "the repos are dead" from the
+release's end-of-life date alone. Checked against the live servers: 20.04 is
+past its standard end-of-life but still on the main archive (LTS releases stay
+there through ESM), and 25.04 and 25.10 were past end-of-life but not yet
+moved. The detect fired on all of them, and the fix would have pointed apt at
+old-releases, which does not carry them — causing the very failure it names.
+The detect now reports a problem only when archive.ubuntu.com returns 404 for
+the release *and* old-releases returns 200. If it cannot reach them it reports
+ERROR, not healthy.
+
+*Why this is still a read-only detect:* §10's rule protects the machine.
+Fetching a Release file's headers changes nothing here; `apt-get update`, which
+the original sketch used, writes to `/var/lib/apt/lists` and so does not
+qualify.
+
+**2026-10-02 — The tracker moves into the repo.** The backlog spreadsheet was
+a team handoff sheet kept outside the repo. The project now has one person
+testing, so it became `docs/sf3000-tracker.xlsx` and changes in the same commits
+as the playbooks it describes. Its Verified columns still take values only from
+a real VM run.
+
 ---
 
-*Last updated: revision 8 — recorded the 2026-09-09 VM result:
+*Last updated: revision 9 — recorded the 2026-09-09 `verify_failed` run;
+the 2026-10-02 decisions on `failed-systemd-units`, `verify.settle_seconds`,
+server checks in a detect and the tracker; the lab's release (22.10); and the
+new test fixtures. Revision 8 — recorded the 2026-09-09 VM result:
 `DPkg::Lock::Timeout` does not cover the apt archives lock, and `blocked` earned
 its first real-machine run; reconciled §13 with it. Revision 7 — recorded the
 `blocked` outcome and the apt-lock command amendments of 2026-09-08. Revision 6 — corrected §12/§13, which revision 5 wrongly
