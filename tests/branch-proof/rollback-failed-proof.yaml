@@ -1,0 +1,37 @@
+# NOT A REAL PLAYBOOK. Proves rollback_failed - and, answered N, declined.
+#
+# The detect looks for a file nothing ever creates, so the problem is always
+# present. The fix is `true`: it exits 0 and heals nothing, so verify fails
+# and the engine rolls back. The undo then exits 7 on purpose. That is the
+# worst state the engine can record - a change it could not take back - so
+# it must be reported as rollback_failed, never as anything milder.
+#
+# Expected, answer y: outcome rollback_failed, rollback_result
+#   "failed: deliberate undo failure", exit 1.
+# Expected, answer N: outcome declined, confirmed false.
+# Nothing on the machine changes either way, so it can run any number of times.
+#
+# Lives in tests/, NOT playbooks/, so it never loads in a normal run.
+id: rollback-failed-proof
+description: Fix that heals nothing, with an undo that fails on purpose
+applies_to:
+  os: linux
+  distros: [ubuntu]
+symptoms:
+  - "not a real symptom - test fixture only"
+detect:
+  command: "test -e /tmp/sf3000-rollback-failed-proof-never-created"
+  produces: exit_code
+expect:
+  predicate: exit_zero
+risk: safe
+requires_privilege: false
+reverse:
+  strategy: command
+  command:
+    ubuntu: "echo 'deliberate undo failure' >&2; exit 7"
+fix:
+  ubuntu: "true"                 # exits 0, heals nothing
+verify:
+  rerun: detect
+source: "internal - test fixture, not a vetted repair. Not yet run on a VM."

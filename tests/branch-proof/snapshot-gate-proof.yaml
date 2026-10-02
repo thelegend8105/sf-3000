@@ -1,0 +1,33 @@
+# NOT A REAL PLAYBOOK. Proves the snapshot gate refuses a destructive fix.
+#
+# risk: destructive (and reverse: snapshot_only) means the engine must refuse
+# before it runs anything at all - detect included - because the snapshot
+# layer is not built. The fix would leave a marker file; after the run that
+# file must NOT exist.
+#
+# Expected: "requires a snapshot before fixing ... Refusing to fix.", exit 4,
+# and `ls /tmp/sf3000-snapshot-gate-breach` reports "No such file".
+# The refusal comes before logging, so no run record is written.
+#
+# Lives in tests/, NOT playbooks/, so it never loads in a normal run.
+id: snapshot-gate-proof
+description: Destructive fix that the snapshot gate must refuse
+applies_to:
+  os: linux
+  distros: [ubuntu]
+symptoms:
+  - "not a real symptom - test fixture only"
+detect:
+  command: "false"
+  produces: exit_code
+expect:
+  predicate: exit_zero
+risk: destructive
+requires_privilege: false
+reverse:
+  strategy: snapshot_only
+fix:
+  ubuntu: "touch /tmp/sf3000-snapshot-gate-breach"   # must never run
+verify:
+  rerun: detect
+source: "internal - test fixture, not a vetted repair. Not yet run on a VM."

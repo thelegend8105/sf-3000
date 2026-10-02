@@ -1,0 +1,41 @@
+# NOT A REAL PLAYBOOK. Proves a verify that cannot MEASURE is not reported as
+# a verify that measured "still broken" - and that the fix is undone anyway.
+#
+# The detect reads a number from a file. The fix overwrites it with text, so
+# the re-run detect cannot parse it: verify errors. The engine must fill the
+# record's verify_error field, leave verify_after null, and roll back - an
+# unproven change on a machine in an unknown state is exactly what rollback
+# is for. The undo writes the number back.
+#
+# Setup (as root, so root owns the file - Ubuntu can refuse root writes to a
+# /tmp file another user owns):
+#   sudo sh -c 'echo 99 > /tmp/sf3000-verify-error-proof'
+# Expected: "verify could not measure the machine", rollback succeeded,
+# outcome rolled_back, verify_error set. The file holds 99 again afterwards,
+# so it repeats without new setup.
+#
+# Lives in tests/, NOT playbooks/, so it never loads in a normal run.
+id: verify-error-proof
+description: Fix that leaves the detect unable to measure
+applies_to:
+  os: linux
+  distros: [ubuntu]
+symptoms:
+  - "not a real symptom - test fixture only"
+detect:
+  command: "cat /tmp/sf3000-verify-error-proof"
+  produces: integer
+expect:
+  predicate: less_than
+  value: 50
+risk: safe
+requires_privilege: false
+reverse:
+  strategy: command
+  command:
+    ubuntu: "echo 99 > /tmp/sf3000-verify-error-proof"
+fix:
+  ubuntu: "echo not-a-number > /tmp/sf3000-verify-error-proof"
+verify:
+  rerun: detect
+source: "internal - test fixture, not a vetted repair. Not yet run on a VM."

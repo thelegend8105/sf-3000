@@ -8,6 +8,13 @@
 # Expected outcome: verify_failed -> rollback runs -> outcome "rolled_back",
 # with cowsay removed and the machine back where it started.
 #
+# The detect asks dpkg about a package that does not exist, so the "problem"
+# is always present and the run leaves nothing behind: it repeats any number
+# of times, in any order. Until 2026-10-02 it borrowed `dpkg -s net-tools`
+# from net-tools-missing, which made it single-shot and forced it to run
+# before that playbook. Precondition: cowsay is NOT installed - the rollback
+# removes it.
+#
 # Lives in tests/, NOT playbooks/, so it never loads in a normal run.
 id: rollback-proof
 description: Deliberately failing fix, used to prove the rollback path
@@ -17,7 +24,7 @@ applies_to:
 symptoms:
   - "not a real symptom - test fixture only"
 detect:
-  command: "dpkg -s net-tools"
+  command: "dpkg -s sf3000-rollback-marker"   # never exists
   produces: exit_code
 expect:
   predicate: exit_zero
@@ -31,4 +38,4 @@ fix:
   ubuntu: "apt-get install -y cowsay"   # wrong package on purpose: exits 0, heals nothing
 verify:
   rerun: detect
-source: "internal - test fixture, not a vetted repair. Rollback path proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 (commit 0d7551d) and 2026-09-07 (commit 2ef3c6d); outcome rolled_back, rollback exit 0 both times."
+source: "internal - test fixture, not a vetted repair. Rollback path proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 (commit 0d7551d) and 2026-09-07 (commit 2ef3c6d); outcome rolled_back, rollback exit 0 both times. Both runs used the old net-tools detect; the marker detect (2026-10-02) has not run yet."
