@@ -1,0 +1,9 @@
+# Proof C - a failed oneshot. The playbook must IGNORE it: restarting a
+# oneshot re-runs its job. Expected: it shows in `systemctl --failed`, yet the
+# detect reports HEALTHY, and a --fix run for A or B never restarts it.
+[Unit]
+Description=SF3000 proof C - a oneshot that fails
+
+[Service]
+Type=oneshot
+ExecStart=/bin/false

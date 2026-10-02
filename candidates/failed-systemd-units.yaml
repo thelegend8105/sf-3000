@@ -1,0 +1,69 @@
+# CANDIDATE - not yet vetted. Moved OUT of playbooks/ on 2026-10-02.
+#
+# WHY IT MOVED: the old fix was `systemctl reset-failed`, which clears the
+# failed flag - the very thing the detect counted. The predicate flipped
+# whether or not any service was repaired, so the engine could report
+# `healed` on a still-broken machine and destroy the diagnostic flag on the
+# way. Its source line also claimed "tested on Ubuntu 24.04"; no record of
+# that run exists. A new fix that has never run belongs here, not in the
+# trusted library.
+#
+# THE NEW FIX restarts the failed services, then waits 30s and checks once.
+# The wait is load-bearing: for Type=simple units `systemctl restart` exits 0
+# as soon as the process is forked, even if it dies a moment later. Without
+# the wait, a service that crashes ten seconds after starting would read as
+# healed.
+#
+# SCOPE - deliberately narrower than "every failed unit":
+#   * services only (not mounts, sockets, timers);
+#   * loaded units only - a failed unit whose file was deleted is not a
+#     broken service any more, and restarting it can only fail;
+#   * Type=oneshot is EXCLUDED. Restarting a oneshot re-runs its job, and for
+#     apt-daily-upgrade.service that job is installing upgrades. That is not
+#     what someone agreeing to "restart failed services" agreed to.
+# Detect and fix use the same filter, so the fix only ever restarts what the
+# detect showed - and the engine lists those units before asking y/N.
+#
+# KNOWN LIMITS, not vetted away:
+#   * a service that crashes MORE than 30s after starting reads as healed;
+#   * a service that crash-loops slowly enough never shows as failed at all,
+#     before or after the fix - this playbook cannot see it;
+#   * if one of several restarts fails, systemctl exits non-zero and the
+#     outcome is fix_failed, even if the others recovered.
+#
+# Test units for the VM run are in tests/systemd-proof/.
+id: failed-systemd-units
+description: One or more systemd services have stopped with an error
+applies_to:
+  os: linux
+  distros: [ubuntu]
+symptoms:
+  - "something isn't starting on boot"
+  - "a service keeps dying"
+detect:
+  command: |-
+    systemctl --failed --type=service --no-legend --plain |
+      awk '$2 == "loaded" {print $1}' |
+      while read -r u; do
+        [ "$(systemctl show -p Type --value "$u")" = oneshot ] || echo "$u"
+      done
+  produces: line_count       # one line per failed, loaded, non-oneshot service
+expect:
+  predicate: equals
+  value: 0
+risk: moderate               # starting a service runs whatever it does on start
+requires_privilege: true     # restarting system units goes through polkit
+reverse:
+  strategy: none             # the services were already down; there is no "un-restart"
+fix:
+  ubuntu: |-
+    systemctl --failed --type=service --no-legend --plain |
+      awk '$2 == "loaded" {print $1}' |
+      while read -r u; do
+        [ "$(systemctl show -p Type --value "$u")" = oneshot ] || echo "$u"
+      done |
+      xargs -r systemctl restart
+verify:
+  rerun: detect
+  settle_seconds: 30
+source: "CANDIDATE - NOT VETTED. Restart-based fix chosen 2026-10-02 to replace `systemctl reset-failed`, which cleared the flag the detect counts and could report healed on a broken machine. Neither the new detect nor the new fix has run anywhere. The previous source line claimed 'tested on Ubuntu 24.04'; no record of that run exists, so it was not carried over."

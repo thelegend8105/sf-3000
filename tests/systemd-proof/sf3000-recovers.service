@@ -1,0 +1,10 @@
+# Proof A - a service that failed for a reason that has since gone away.
+# It exits 1 until /run/sf3000-ok exists, then stays up. This is the case the
+# restart fix is for (e.g. a service that failed at boot before the network
+# was up). Expected after `touch /run/sf3000-ok` and --fix: outcome healed.
+[Unit]
+Description=SF3000 proof A - fails until /run/sf3000-ok exists
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'test -e /run/sf3000-ok || exit 1; exec sleep infinity'
