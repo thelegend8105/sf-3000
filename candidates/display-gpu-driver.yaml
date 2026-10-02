@@ -35,4 +35,4 @@ risk: moderate
 requires_privilege: false    # detect only; nothing here needs root
 reverse:
   strategy: none             # nothing is changed, so there is nothing to undo
-source: "CANDIDATE - NOT VETTED, detect-only. Sketch from sf3000-fixable-problems.xlsx (Ubuntu sheet, display-gpu-driver). Replace once a VM run fills in 'Tested on'."
+source: "CANDIDATE - NOT VETTED, detect-only. Sketch from docs/sf3000-tracker.xlsx (Ubuntu sheet, display-gpu-driver). Replace once a VM run fills in 'Tested on'."

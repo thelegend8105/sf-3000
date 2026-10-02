@@ -34,4 +34,4 @@ fix:
   ubuntu: "rfkill unblock wifi"
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Narrowed from sf3000-fixable-problems.xlsx (Ubuntu sheet, wifi-down). Replace once a VM run fills in 'Tested on'."
+source: "CANDIDATE - NOT VETTED. Narrowed from docs/sf3000-tracker.xlsx (Ubuntu sheet, wifi-down). Replace once a VM run fills in 'Tested on'."
