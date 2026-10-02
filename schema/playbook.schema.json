@@ -105,7 +105,13 @@
       "additionalProperties": false,
       "description": "How to confirm the fix worked. Re-running detect is the default.",
       "properties": {
-        "rerun": { "type": "string", "enum": ["detect"] }
+        "rerun": { "type": "string", "enum": ["detect"] },
+        "settle_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "description": "Wait this long after the fix exits 0, then re-run detect ONCE. For fixes whose effect is not instant or not yet stable (a restarted service that may crash again, a clock that has to sync). Not a retry loop: the reading after the wait is the verdict."
+        }
       }
     },
     "source": {

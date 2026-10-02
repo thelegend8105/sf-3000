@@ -9,7 +9,8 @@ Detect path (unchanged):
   * evaluates the expect predicate  -> HEALTHY / PROBLEM / ERROR
 
 Fix path (P1, opt-in via --fix <id>):
-  confirm -> [snapshot if gated] -> fix -> verify -> log -> rollback on failure
+  confirm -> [snapshot if gated] -> fix -> [settle] -> verify -> log
+  -> rollback on failure
 
 Fixes NEVER run unless --fix names a playbook explicitly. Without it this is
 still a read-only reporting tool.
@@ -26,6 +27,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,6 +46,7 @@ SKIPPED = "SKIPPED"   # not for this machine — deliberately NOT checked
 
 DETECT_TIMEOUT = 30    # read-only probes are quick
 FIX_TIMEOUT = 600      # apt-get install on a slow VM is not
+FOUND_SHOWN = 5        # line_count detects: how many found lines to print
 
 # Outcomes describe the final state of the MACHINE (see DESIGN.md section 16).
 HEALED = "healed"                    # fix ran, predicate flipped
@@ -179,7 +182,17 @@ def assess(pb: dict):
     if err:
         return ERROR, None, err
     healthy = evaluate(pb, measurement, proc)
-    return (HEALTHY if healthy else PROBLEM), measurement, f"measured={measurement!r}"
+    detail = f"measured={measurement!r}"
+    if pb["detect"]["produces"] == "line_count" and measurement:
+        # A bare count hides WHAT was found. For failed-systemd-units that is
+        # the list of services a fix would restart, and the person answering
+        # y/N should see it before they answer.
+        lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+        shown = ", ".join(lines[:FOUND_SHOWN])
+        if len(lines) > FOUND_SHOWN:
+            shown += f", ... (+{len(lines) - FOUND_SHOWN} more)"
+        detail += f" ({shown})"
+    return (HEALTHY if healthy else PROBLEM), measurement, detail
 
 
 def diagnose(pb: dict):
@@ -378,6 +391,7 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
         "snapshot_id": None,
         "fix_command": None,
         "fix_exit_code": None,
+        "settle_seconds": None,
         "verify_after": None,
         "verify_error": None,
         "blocked_reason": None,
@@ -461,7 +475,18 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
         print(f"  {MARK['arrow']} fix failed (exit={code}) {err}")
         record["outcome"] = rollback(pb, distro, record) or FIX_FAILED
     else:
-        print(f"  {MARK['arrow']} fix exited 0 — verifying")
+        settle = pb.get("verify", {}).get("settle_seconds")
+        if settle:
+            # Wait, then check ONCE. Not "retry until healthy": a restarted
+            # service that crashes ten seconds later is healthy at second one,
+            # and retrying would accept that first good reading. The question
+            # is whether the fix still holds after the wait.
+            record["settle_seconds"] = settle
+            print(f"  {MARK['arrow']} fix exited 0 — waiting {settle}s for the "
+                  "machine to settle, then verifying")
+            time.sleep(settle)
+        else:
+            print(f"  {MARK['arrow']} fix exited 0 — verifying")
         v_status, v_measure, v_detail = assess(pb)
         if v_status == HEALTHY:
             record["verify_after"] = v_measure
@@ -520,7 +545,7 @@ def main():
             return 2
         return fix_one(chosen, args.distro, Path(args.log), args.host_os)
 
-    problems = skipped = 0
+    problems = fixable = skipped = 0
     identity = f"{args.host_os}/{args.distro}" if args.distro else args.host_os
     print(f"\nRunning checks on {identity}:\n" + "-" * 60)
     for pb in playbooks:
@@ -535,6 +560,15 @@ def main():
             problems += 1
             fix = pick_fix(pb, args.distro)
             print(f"            {MARK['arrow']} {pb['description']}")
+            if fix is None:
+                # Printing "DRY-RUN fix: None" here read as a fix that exists
+                # and does nothing. Say what is actually true instead.
+                why = ("detect-only — it has no fix by design; a person needs "
+                       "to look at this" if "fix" not in pb
+                       else f"no fix command for distro {args.distro!r}")
+                print(f"            {MARK['arrow']} {why}")
+                continue
+            fixable += 1
             print(f"            {MARK['arrow']} risk={pb['risk']} "
                   f"undo={pb['reverse']['strategy']} "
                   f"privilege={pb['requires_privilege']}")
@@ -544,7 +578,7 @@ def main():
     if skipped:
         summary += f" {skipped} playbook(s) skipped — not for this machine."
     print(f"{summary} (No fixes were executed.)")
-    if problems:
+    if fixable:
         print("Run one for real with:  --fix <id>")
     return 0
 
