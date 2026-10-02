@@ -39,4 +39,4 @@ fix:
   fedora: "dnf clean all && journalctl --vacuum-time=7d"
 verify:
   rerun: detect
-source: "internal - UNVETTED: this reclaim has never completed on any machine. Both attempts on Ubuntu 26.04 LTS (2026-09-07; 2026-09-09 with the lock held deliberately) were stopped by a holder of /var/cache/apt/archives/lock before apt ran, and the engine reported `blocked` correctly each time. The 2026-09-09 run also proved DPkg::Lock::Timeout does NOT cover that lock - apt failed instantly against a 90s hold - so the flag was dropped from the command above."
+source: "internal - detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-09-09: 92% -> 86%, outcome healed. That was the FIRST completed run of this entry; two earlier attempts (2026-09-07, and 2026-09-09 with the lock held deliberately) were stopped by a holder of /var/cache/apt/archives/lock before apt ran and reported `blocked` correctly. The reclaim is the apt cache plus journals older than 7d ONLY - it does not touch user data, so it will not rescue a disk filled by the user's own files. See the NO LOCK TIMEOUT note above."

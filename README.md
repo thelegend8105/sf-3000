@@ -29,12 +29,16 @@ the machine is touched.
 > caught and undone (`outcome: rolled_back`) — alongside a real repair that
 > heals. `fix_failed` and the `reverse: none` branch were exercised for real on
 > 2026-09-07, by an apt lock rather than by design, and `blocked` on 2026-09-09
-> with that lock held deliberately. Still unexercised on a real machine:
+> with that lock held deliberately, and `verify_failed` the same day when a fix
+> exited 0 with nothing left to reclaim. Still unexercised on a real machine:
 > `declined`, `rollback_failed`, `verify_error`, and the snapshot-gate refusal.
 >
-> **`disk-root-near-full` has never completed a run anywhere** — see its
-> `source:` line. Both attempts were stopped by the apt lock before the reclaim
-> ran. It is the next thing to earn provenance.
+> **`disk-root-near-full` has now completed a run** — 2026-09-09, 92% → 86%,
+> outcome `healed`, after two attempts the apt lock stopped first. Its reclaim
+> is the apt cache and journals older than 7 days only: it does not touch user
+> data and will not rescue a disk filled by the user's own files.
+> `failed-systemd-units` is the only entry whose fix has still never run
+> anywhere.
 
 ## Run it
 

@@ -316,8 +316,10 @@ proactive sweep) live in the MVP.
 a non-matching host; and the fix lifecycle's main outcomes — `healed` and
 `rolled_back`, the latter reached through the verify-failure branch that
 triggers the undo. `fix_failed` and the `reverse: none` branch were reached on
-2026-09-07 by an apt lock rather than by design, and `blocked` on 2026-09-09
-with that lock held deliberately. The evidence is `logs/runs.jsonl` in the VM. That file is
+2026-09-07 by an apt lock rather than by design, `blocked` on 2026-09-09 with
+that lock held deliberately, and `verify_failed` standing as a final outcome the
+same day, when `boot-partition-full` exited 0 with no autoremovable kernel left
+to reclaim. The evidence is `logs/runs.jsonl` in the VM. That file is
 gitignored, so it exists only on the machine that ran it — which is why its
 absence on a dev box is not evidence of anything.
 
