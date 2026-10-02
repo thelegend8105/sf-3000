@@ -1,17 +1,38 @@
-# CANDIDATE - not yet vetted. The project's origin story.
+# CANDIDATE - not yet vetted. The project's origin story: the lab ran 22.10.
 #
 # The spreadsheet sketch detects with "lsb_release -sc + EOL check + apt-get
 # update result". `apt-get update` writes to /var/lib/apt/lists, so it is a
 # mutation and cannot be the detect - the sheet's own golden rule #1. This
-# detect is instead purely local and read-only: it asks whether the running
-# release is past its EOL date (from distro-info-data, already on the machine)
-# AND still points at the live archive. That pair is what breaks apt.
+# detect changes nothing on the machine. It reports a problem only when ALL
+# of these hold:
+#   1. the release is past its EOL date (distro-info-data, already on disk);
+#   2. apt's sources still point at archive/security.ubuntu.com;
+#   3. archive.ubuntu.com no longer serves this release (HTTP 404) AND
+#      old-releases.ubuntu.com does (HTTP 200).
+#
+# WHY (3) EXISTS - corrected 2026-10-02. The EOL date alone is not "the repos
+# are dead". Checked against the live servers that day: 20.04 (EOL
+# 2025-05-29) is still on the main archive because LTS releases stay there
+# through ESM; 25.04 and 25.10 were past EOL but not moved yet. On every one
+# of those the old detect fired, and the fix would have pointed apt at
+# old-releases, which does not carry them - breaking a working apt. A fix
+# that causes the problem it names is the worst kind of library entry.
+# Asking the two servers is a read, not a change to this machine.
+#
+# Also corrected 2026-10-02: the detect used `grep -r` over sources.list.d/,
+# which also read the fix's own *.sf3000.bak copies (and the installer's
+# *.curtin.orig), still full of the old URLs. Verify could never pass. It
+# now reads only *.list and *.sources - the files apt itself reads - and
+# matches exactly the URLs the fix's sed rewrites, so detect and fix agree.
+#
+# ERROR, not healthy, when it cannot tell: a missing distro-info file or
+# unreachable servers print nothing, which the engine reports as ERROR.
 #
 # KNOWN LIMIT: verify proves the sources were rewritten, not that `apt-get
 # update` now succeeds. Proving that requires a mutation, so it stays a manual
 # check after the run.
 id: eos-release-dead-repos
-description: This Ubuntu release is end-of-support and its apt sources still point at the live archive
+description: This Ubuntu release is end-of-support, its packages have moved to old-releases, and apt still points at the old address
 symptoms:
   - "apt update says 404 not found"
   - "repository does not have a Release file"
@@ -22,9 +43,34 @@ applies_to:
 detect:
   command: |-
     . /etc/os-release
-    awk -F, -v s="$VERSION_CODENAME" -v today="$(date +%F)" '$3 == s && $6 != "" && $6 < today { e = 1 } END { exit e ? 0 : 1 }' /usr/share/distro-info/ubuntu.csv || { echo 0; exit 0; }
-    grep -rhoE '(archive|security)\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | wc -l
-  produces: integer          # live-archive references on an EOL release; 0 when supported
+    csv=/usr/share/distro-info/ubuntu.csv
+    [ -r "$csv" ] || { echo "cannot read $csv" >&2; exit 1; }
+    awk -F, -v s="$VERSION_CODENAME" -v today="$(date +%F)" '$3 == s && $6 != "" && $6 < today { e = 1 } END { exit e ? 0 : 1 }' "$csv" || { echo 0; exit 0; }
+    n=$(grep -hoE 'https?://([a-z0-9.-]*archive|security)\.ubuntu\.com/ubuntu' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | wc -l)
+    [ "$n" -eq 0 ] && { echo 0; exit 0; }
+    python3 - "$VERSION_CODENAME" <<'PY'
+    import sys, urllib.error, urllib.request
+    def status(url):
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                return resp.status
+        except urllib.error.HTTPError as err:
+            return err.code
+        except Exception:
+            return None
+    series = sys.argv[1]
+    live = status(f"http://archive.ubuntu.com/ubuntu/dists/{series}/Release")
+    old = status(f"http://old-releases.ubuntu.com/ubuntu/dists/{series}/Release")
+    if live is None or old is None:
+        sys.exit("could not reach the Ubuntu archives")   # exit 1
+    sys.exit(0 if (live == 404 and old == 200) else 3)
+    PY
+    rc=$?
+    [ "$rc" -eq 0 ] && { echo "$n"; exit 0; }
+    [ "$rc" -eq 3 ] && { echo 0; exit 0; }
+    exit 1
+  produces: integer          # dead-archive URLs in apt's sources; 0 when there is nothing to fix
 expect:
   predicate: equals
   value: 0
@@ -47,4 +93,4 @@ fix:
     done
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Sketch from sf3000-fixable-problems.xlsx (Ubuntu sheet, eos-release-dead-repos). Replace once a VM run fills in 'Tested on'."
+source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files); the reworked detect has not run anywhere. Planned VM runs: 22.10 and 24.10 must report a problem and heal; 20.04 and 25.04 must report healthy."
