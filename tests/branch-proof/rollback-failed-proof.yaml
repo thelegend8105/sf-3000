@@ -34,4 +34,4 @@ fix:
   ubuntu: "true"                 # exits 0, heals nothing
 verify:
   rerun: detect
-source: "internal - test fixture, not a vetted repair. Not yet run on a VM."
+source: "internal - test fixture, not a vetted repair. Run on Ubuntu 26.04 LTS (resolute) 2026-10-04, commit 69658de: answered N -> declined, confirmed false, nothing ran; answered y -> rollback_failed, undo exit 7. Records: evidence/ubuntu-26.04-2026-10-04.jsonl, lines 1-2."

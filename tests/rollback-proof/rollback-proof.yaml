@@ -38,4 +38,4 @@ fix:
   ubuntu: "apt-get install -y cowsay"   # wrong package on purpose: exits 0, heals nothing
 verify:
   rerun: detect
-source: "internal - test fixture, not a vetted repair. Rollback path proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 (commit 0d7551d) and 2026-09-07 (commit 2ef3c6d); outcome rolled_back, rollback exit 0 both times. Both runs used the old net-tools detect; the marker detect (2026-10-02) has not run yet."
+source: "internal - test fixture, not a vetted repair. Rollback path proven on Ubuntu 26.04 LTS (resolute) 2026-09-05 (commit 0d7551d) and 2026-09-07 (commit 2ef3c6d); outcome rolled_back, rollback exit 0 both times. Both runs used the old net-tools detect, and their records survive only in commit 541cb09. The marker detect (2026-10-02) ran twice in a row on 2026-10-04, commit 69658de: rolled_back both times, rollback exit 0, no setup in between. Records: evidence/ubuntu-26.04-2026-10-04.jsonl, lines 4-5."

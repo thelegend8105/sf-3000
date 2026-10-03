@@ -29,17 +29,18 @@ Passing `--fix <id>` opts one playbook into the full lifecycle — confirm, fix,
 verify, log, and roll back if the fix does not prove itself. Nothing else on
 the machine is touched.
 
-> **Status: the fix lifecycle's main paths are proven.** `tests/rollback-proof/`
-> has run green in a VM — a fix that exits 0 without flipping the predicate is
-> caught and undone (`outcome: rolled_back`) — alongside a real repair that
-> heals. `fix_failed` and the `reverse: none` branch were exercised for real on
-> 2026-09-07, by an apt lock rather than by design. `verify_failed` followed on
-> 2026-09-08, when a fix exited 0 without reclaiming enough, and `blocked` on
-> 2026-09-09 with that lock held deliberately. The run records are in
-> `evidence/`. Still unexercised on a real machine: `declined`,
-> `rollback_failed`, `verify_error`, and the snapshot-gate refusal. Each now has
-> a VM fixture in `tests/branch-proof/`, and all of them pass offline in
-> `tests/lifecycle-proof/`.
+> **Status: every outcome of the fix lifecycle has run on a real machine.**
+> `tests/rollback-proof/` has run green in a VM — a fix that exits 0 without
+> flipping the predicate is caught and undone (`outcome: rolled_back`) —
+> alongside a real repair that heals. `fix_failed` and the `reverse: none`
+> branch were exercised for real on 2026-09-07, by an apt lock rather than by
+> design. `verify_failed` followed on 2026-09-08, when a fix exited 0 without
+> reclaiming enough, and `blocked` on 2026-09-09 with that lock held
+> deliberately. The fixtures in `tests/branch-proof/` covered the rest on
+> 2026-10-04: `declined`, `rollback_failed`, `verify_error`, and the
+> snapshot-gate refusal. The run records are in `evidence/`. Not yet run on a
+> real machine: the `settle_seconds` wait, which the `failed-systemd-units` run
+> will be the first to use.
 >
 > **`disk-root-near-full` has healed three times** — its current command on
 > 2026-09-09 (92% → 86%), and two earlier versions on 2026-09-08 (90% → 85%).

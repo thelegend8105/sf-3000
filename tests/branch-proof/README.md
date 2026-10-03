@@ -1,5 +1,8 @@
 # branch-proof — VM run for the outcomes a passing run never reaches
 
+**Ran green on 2026-10-04** on Ubuntu 26.04, commit `69658de`. Records:
+`evidence/ubuntu-26.04-2026-10-04.jsonl`. The steps below repeat any time.
+
 Three fixtures, one per branch. None uses apt or the network, and none leaves
 a change behind, so each runs in seconds and can be repeated. Run from
 `~/sf-3000`, under sudo like every other VM run, so all records land in the

@@ -32,7 +32,9 @@ it. It does not mean the value was null.
 
 It does **not** hold the runs before 2026-09-07 23:35 IST. Something reset the
 log that evening, after 21:46 IST. It was either a snapshot revert or a fresh
-clone; nobody remembers which, and nothing recorded it. Those earlier runs
+clone; nobody remembers which, and nothing recorded it. The only snapshot,
+`clean-baseline`, was taken at 23:21 IST that evening, and restoring it brings
+no run log back (checked 2026-10-04). So those records are gone for good. They
 survive only as transcriptions in two commit messages:
 
 - `541cb09` quotes five records read from the VM's log at the time:
@@ -40,5 +42,19 @@ survive only as transcriptions in two commit messages:
   rollback-proof `rolled_back` (09-05 16:17, 09-07 21:29).
 - `a42e25c` describes boot-partition-full `healed`, 100% → 76% (09-07).
 
-`rolled_back` has no record in a copied file yet. Session 1 runs
-rollback-proof twice, which will give it one.
+### `ubuntu-26.04-2026-10-04.jsonl`
+
+Session 1: the fixtures in `tests/branch-proof/` and `tests/rollback-proof/`.
+5 runs on `Ubuntu Server Test`, 2026-10-04 00:23 to 00:30 IST, commit
+`69658de`, from a fresh clone after restoring `clean-baseline`.
+
+- Line 1: `declined` (rollback-failed-proof, answered N).
+- Line 2: `rollback_failed` (rollback-failed-proof, answered y).
+- Line 3: `rolled_back` with `verify_error` set (verify-error-proof).
+- Lines 4–5: `rolled_back` twice (rollback-proof). These give `rolled_back`
+  a record in a file; its two earlier runs survive only in commit 541cb09.
+
+The snapshot-gate test ran first and has no line, by design: the engine
+refuses before it logs anything. It refused with exit 4, and its marker file
+was never created. That result comes from the terminal output, confirmed by
+the person who ran it.

@@ -38,4 +38,4 @@ fix:
   ubuntu: "echo not-a-number > /tmp/sf3000-verify-error-proof"
 verify:
   rerun: detect
-source: "internal - test fixture, not a vetted repair. Not yet run on a VM."
+source: "internal - test fixture, not a vetted repair. Run on Ubuntu 26.04 LTS (resolute) 2026-10-04, commit 69658de: verify_error set, verify_after null, undo exit 0, outcome rolled_back. Record: evidence/ubuntu-26.04-2026-10-04.jsonl, line 3."

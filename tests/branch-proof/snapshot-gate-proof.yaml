@@ -30,4 +30,4 @@ fix:
   ubuntu: "touch /tmp/sf3000-snapshot-gate-breach"   # must never run
 verify:
   rerun: detect
-source: "internal - test fixture, not a vetted repair. Not yet run on a VM."
+source: "internal - test fixture, not a vetted repair. Run on Ubuntu 26.04 LTS (resolute) 2026-10-04, commit 69658de: refused with exit 4, and the marker file was never created. No log record by design; the result is the terminal output, confirmed by the person who ran it."

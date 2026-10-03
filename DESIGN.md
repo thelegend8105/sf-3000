@@ -272,16 +272,16 @@ proactive sweep) live in the MVP.
 - **Phase 0 — Skeleton (done).** Schema + a few real playbooks + an engine that
   loads, validates, runs detects, and diagnoses. Fixes shown as dry-run only.
   Proven working on Ubuntu.
-- **Phase 1 — Safe single machine (main paths proven).** The safety layer
+- **Phase 1 — Safe single machine (every outcome proven).** The safety layer
   exists and works: `tests/rollback-proof/` has run green in a VM — a fix that
   exits 0 without flipping the predicate is caught and undone — alongside a
-  real repair that heals. Remaining: run the VM fixtures in
-  `tests/branch-proof/` for the branches a passing run never reaches
-  (`declined`, `rollback_failed`, `verify_error`, the snapshot-gate refusal —
-  all already proven offline), prove the reworked `failed-systemd-units` and
-  `eos-release-dead-repos`, and grow the library of Ubuntu playbooks from
-  problems we've really solved. The test releases are in
-  `docs/sf3000-tracker.xlsx`.
+  real repair that heals. On 2026-10-04 the fixtures in `tests/branch-proof/`
+  ran green too, covering the branches a passing run never reaches
+  (`declined`, `rollback_failed`, `verify_error`, the snapshot-gate refusal).
+  Remaining: prove the reworked `failed-systemd-units` (whose run is also the
+  first real test of `verify.settle_seconds`) and `eos-release-dead-repos`,
+  and grow the library of Ubuntu playbooks from problems we've really solved.
+  The test releases are in `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
   map out commands + use cases and review competitor apps to keep growing the
@@ -331,21 +331,28 @@ triggers the undo. `fix_failed` and the `reverse: none` branch were reached on
 final outcome on 2026-09-08, when `disk-root-near-full` was pushed to 95%,
 further than its reclaim can recover, and again on 2026-09-09 and 2026-09-10,
 when `boot-partition-full` had no autoremovable kernel left. `blocked` came on
-2026-09-09 with the lock held deliberately.
+2026-09-09 with the lock held deliberately. The rest came from the fixtures in
+`tests/branch-proof/` on 2026-10-04: `declined`, `rollback_failed`, and
+`verify_error` (recorded, then undone) — and the snapshot gate's refusal, which
+refused with exit 4 before running anything. With those, every outcome the
+engine can record has been seen on a real machine. The gate refuses rather than
+snapshots: there is nothing to take a snapshot with until the snapshot layer is
+built.
 
 The evidence is the engine's `logs/runs.jsonl`. That file is gitignored, so it
 exists only on the machine that ran it — which is why its absence on a dev box
-is not evidence of anything — and a snapshot revert deletes it. The 26.04 VM's
-log was copied off on 2026-10-03 into `evidence/`. It starts at 2026-09-07
-23:35 IST: something reset the log earlier that evening. The runs before that,
-including both `rolled_back` runs, survive only as transcriptions in the
-messages of commits 541cb09 and a42e25c.
+is not evidence of anything — and a snapshot revert deletes it. The VM's logs
+are copied off into `evidence/` before each revert. The first copy, made on
+2026-10-03, starts at 2026-09-07 23:35 IST: something reset the log earlier
+that evening, and restoring `clean-baseline` brings no older log back. The runs
+before that survive only as transcriptions in the messages of commits 541cb09
+and a42e25c. The snapshot gate writes no record by design; its result is the
+terminal output, confirmed by the person who ran it.
 
-**Not proven on a real machine:** the outcome branches a passing run never
-reaches — `declined`, `rollback_failed`, `verify_error` — and the snapshot
-gate's refusal. Each has a VM fixture waiting in `tests/branch-proof/` and
-passes offline. The gate refuses rather than snapshots: there is nothing to
-take a snapshot with until the snapshot layer is built.
+**Not yet seen on a real machine:** the `verify.settle_seconds` wait, which the
+`failed-systemd-units` run will exercise; an undo stopped by a package-manager
+lock (`rollback_result: blocked (retryable)`); and the privilege refusal, which
+also writes no record, and no run of it was noted. All three pass offline.
 
 ---
 
@@ -634,7 +641,11 @@ a real VM run.
 
 ---
 
-*Last updated: revision 10 — reconciled §13 with the 26.04 VM's run log, copied
+*Last updated: revision 11 — recorded Session 1 (2026-10-04): the fixtures in
+`tests/branch-proof/` and `tests/rollback-proof/` ran green, so every outcome
+the engine can record, and the snapshot gate's refusal, has now been seen on a
+real machine; §12 and §13 updated, and the branches still unseen named.
+Revision 10 — reconciled §13 with the 26.04 VM's run log, copied
 off on 2026-10-03 into `evidence/`. It showed `verify_failed` first standing on
 2026-09-08, not 2026-09-09; `disk-root-near-full` healing twice before the run
 recorded as its first; and `boot-partition-full`'s amended command healing on
