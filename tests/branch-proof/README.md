@@ -33,4 +33,5 @@ sudo python3 engine/runner.py --playbooks tests/rollback-proof --fix rollback-pr
 # answer y both times. Expect rolled_back twice, and cowsay absent afterwards.
 ```
 
-Copy `logs/runs.jsonl` to Windows before you revert the VM.
+Copy `logs/runs.jsonl` into `evidence/` before you revert the VM. See
+`evidence/README.md` for the command and the file name.

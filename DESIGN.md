@@ -321,17 +321,25 @@ proactive sweep) live in the MVP.
   lifecycle branch.
 - `docs/sf3000-tracker.xlsx` — the backlog, its status, the VM run log and the
   Ubuntu releases to test on.
+- `evidence/` — the VMs' run logs, copied off before a revert and never edited.
 
 **Proven on a real machine:** the detect path, including SKIPPED reporting on
 a non-matching host; and the fix lifecycle's main outcomes — `healed` and
 `rolled_back`, the latter reached through the verify-failure branch that
 triggers the undo. `fix_failed` and the `reverse: none` branch were reached on
-2026-09-07 by an apt lock rather than by design, `blocked` on 2026-09-09 with
-that lock held deliberately, and `verify_failed` standing as a final outcome the
-same day, when `boot-partition-full` exited 0 with no autoremovable kernel left
-to reclaim. The evidence is `logs/runs.jsonl` in the VM. That file is
-gitignored, so it exists only on the machine that ran it — which is why its
-absence on a dev box is not evidence of anything.
+2026-09-07 by an apt lock rather than by design. `verify_failed` stood as a
+final outcome on 2026-09-08, when `disk-root-near-full` was pushed to 95%,
+further than its reclaim can recover, and again on 2026-09-09 and 2026-09-10,
+when `boot-partition-full` had no autoremovable kernel left. `blocked` came on
+2026-09-09 with the lock held deliberately.
+
+The evidence is the engine's `logs/runs.jsonl`. That file is gitignored, so it
+exists only on the machine that ran it — which is why its absence on a dev box
+is not evidence of anything — and a snapshot revert deletes it. The 26.04 VM's
+log was copied off on 2026-10-03 into `evidence/`. It starts at 2026-09-07
+23:35 IST: something reset the log earlier that evening. The runs before that,
+including both `rolled_back` runs, survive only as transcriptions in the
+messages of commits 541cb09 and a42e25c.
 
 **Not proven on a real machine:** the outcome branches a passing run never
 reaches — `declined`, `rollback_failed`, `verify_error` — and the snapshot
@@ -626,7 +634,11 @@ a real VM run.
 
 ---
 
-*Last updated: revision 9 — recorded the 2026-09-09 `verify_failed` run;
+*Last updated: revision 10 — reconciled §13 with the 26.04 VM's run log, copied
+off on 2026-10-03 into `evidence/`. It showed `verify_failed` first standing on
+2026-09-08, not 2026-09-09; `disk-root-near-full` healing twice before the run
+recorded as its first; and `boot-partition-full`'s amended command healing on
+2026-09-08, where the record said it never had. Revision 9 — recorded the 2026-09-09 `verify_failed` run;
 the 2026-10-02 decisions on `failed-systemd-units`, `verify.settle_seconds`,
 server checks in a detect and the tracker; the lab's release (22.10); and the
 new test fixtures. Revision 8 — recorded the 2026-09-09 VM result:

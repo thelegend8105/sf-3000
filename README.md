@@ -18,6 +18,7 @@ tests/systemd-proof/          throwaway services for the failed-systemd-units VM
 tests/blocked-proof/          an offline proof of the `blocked` branch
 tests/lifecycle-proof/        an offline proof of every other lifecycle branch
 docs/sf3000-tracker.xlsx      the backlog: every problem, its status, VM runs, test versions
+evidence/                     run logs copied off the VMs, verbatim — the record behind every "proven"
 ```
 
 By default the engine is **read-only**. It runs each playbook's `detect`
@@ -32,17 +33,18 @@ the machine is touched.
 > has run green in a VM — a fix that exits 0 without flipping the predicate is
 > caught and undone (`outcome: rolled_back`) — alongside a real repair that
 > heals. `fix_failed` and the `reverse: none` branch were exercised for real on
-> 2026-09-07, by an apt lock rather than by design, and `blocked` on 2026-09-09
-> with that lock held deliberately, and `verify_failed` the same day when a fix
-> exited 0 with nothing left to reclaim. Still unexercised on a real machine:
-> `declined`, `rollback_failed`, `verify_error`, and the snapshot-gate refusal.
-> Each now has a VM fixture in `tests/branch-proof/`, and all of them pass
-> offline in `tests/lifecycle-proof/`.
+> 2026-09-07, by an apt lock rather than by design. `verify_failed` followed on
+> 2026-09-08, when a fix exited 0 without reclaiming enough, and `blocked` on
+> 2026-09-09 with that lock held deliberately. The run records are in
+> `evidence/`. Still unexercised on a real machine: `declined`,
+> `rollback_failed`, `verify_error`, and the snapshot-gate refusal. Each now has
+> a VM fixture in `tests/branch-proof/`, and all of them pass offline in
+> `tests/lifecycle-proof/`.
 >
-> **`disk-root-near-full` has now completed a run** — 2026-09-09, 92% → 86%,
-> outcome `healed`, after two attempts the apt lock stopped first. Its reclaim
-> is the apt cache and journals older than 7 days only: it does not touch user
-> data and will not rescue a disk filled by the user's own files.
+> **`disk-root-near-full` has healed three times** — its current command on
+> 2026-09-09 (92% → 86%), and two earlier versions on 2026-09-08 (90% → 85%).
+> Its reclaim is the apt cache and journals older than 7 days only: it does not
+> touch user data and will not rescue a disk filled by the user's own files.
 >
 > **`failed-systemd-units` left the library on 2026-10-02.** Its old fix
 > cleared the very flag its detect counted, so it could report `healed` on a

@@ -38,7 +38,8 @@ time sudo python3 engine/runner.py --playbooks candidates --fix failed-systemd-u
 systemctl status sf3000-oneshot              # still failed, same "since" time as step 3
 
 # 7. Save the evidence BEFORE reverting (run on Windows)
-#    scp -P 2222 rht@127.0.0.1:sf-3000/logs/runs.jsonl D:\Repositories\SF-3000\evidence\
+#    scp -P 2222 rht@127.0.0.1:sf-3000/logs/runs.jsonl evidence/ubuntu-26.04-<date>.jsonl
+#    (from the repo; naming rules in evidence/README.md)
 ```
 
 Run the fixes under `time`. The wall-clock total (just over 30s) is the
