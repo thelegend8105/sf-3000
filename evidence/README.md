@@ -58,3 +58,49 @@ The snapshot-gate test ran first and has no line, by design: the engine
 refuses before it logs anything. It refused with exit 4, and its marker file
 was never created. That result comes from the terminal output, confirmed by
 the person who ran it.
+
+### `ubuntu-26.04-2026-10-06.jsonl`
+
+Session 2: the services in `tests/systemd-proof/`, for `failed-systemd-units`.
+2 runs on `Ubuntu Server Test`, 2026-10-06 23:34 and 23:36 IST, commit
+`10cb1fd`, from a fresh clone after restoring `clean-baseline` at 23:19 IST.
+Copied off at 23:39 IST.
+
+- Line 1: `healed` (proof A, `sf3000-recovers`). Found 1, restarted it,
+  waited 30 s, found 0. This is the first real `settle_seconds` wait.
+- Line 2: `verify_failed` (proof B, `sf3000-crashes-late`). Found 1,
+  restarted it, waited 30 s, still found 1. `reverse: none` logged "nothing
+  to undo".
+
+Two results have no line, by design. Both come from the terminal, shown in a
+screenshot and confirmed by the person who ran it:
+
+- **The privilege refusal.** Just before 23:50, after the two runs, the fix
+  was run without sudo while `sf3000-crashes-late` was failed. It refused
+  with exit 3 before running the check, and asked nothing.
+- **The VM's journal** for the three test services, transcribed below. The
+  VM prints UTC, so add 05:30 for IST. The oneshot started once (23:31:45
+  IST) and never again, so neither fix restarted it. The journal also times
+  proof B: the fix restarted the service at 23:36:51 and it crashed at
+  23:37:01, before the check that came 30 seconds after the restart.
+
+```
+2026-10-06T18:01:45+00:00 rhtvm systemd[1]: Starting sf3000-oneshot.service - SF3000 proof C - a oneshot that fails...
+2026-10-06T18:01:45+00:00 rhtvm systemd[1]: sf3000-oneshot.service: Main process exited, code=exited, status=1/FAILURE
+2026-10-06T18:01:45+00:00 rhtvm systemd[1]: sf3000-oneshot.service: Failed with result 'exit-code'.
+2026-10-06T18:01:45+00:00 rhtvm systemd[1]: Failed to start sf3000-oneshot.service - SF3000 proof C - a oneshot that fails.
+2026-10-06T18:02:59+00:00 rhtvm systemd[1]: Started sf3000-recovers.service - SF3000 proof A - fails until /run/sf3000-ok exists.
+2026-10-06T18:02:59+00:00 rhtvm systemd[1]: sf3000-recovers.service: Main process exited, code=exited, status=1/FAILURE
+2026-10-06T18:02:59+00:00 rhtvm systemd[1]: sf3000-recovers.service: Failed with result 'exit-code'.
+2026-10-06T18:04:34+00:00 rhtvm systemd[1]: Started sf3000-recovers.service - SF3000 proof A - fails until /run/sf3000-ok exists.
+2026-10-06T18:06:02+00:00 rhtvm systemd[1]: Started sf3000-crashes-late.service - SF3000 proof B - runs for 10s, then crashes.
+2026-10-06T18:06:14+00:00 rhtvm systemd[1]: sf3000-crashes-late.service: Main process exited, code=exited, status=1/FAILURE
+2026-10-06T18:06:14+00:00 rhtvm systemd[1]: sf3000-crashes-late.service: Failed with result 'exit-code'.
+2026-10-06T18:06:51+00:00 rhtvm systemd[1]: Started sf3000-crashes-late.service - SF3000 proof B - runs for 10s, then crashes.
+2026-10-06T18:07:01+00:00 rhtvm systemd[1]: sf3000-crashes-late.service: Main process exited, code=exited, status=1/FAILURE
+2026-10-06T18:07:01+00:00 rhtvm systemd[1]: sf3000-crashes-late.service: Failed with result 'exit-code'.
+```
+
+The journal shows whole seconds. The first crash shows 12 seconds after its
+start, not 10; the second shows 10. Each crash came well before the next
+check.

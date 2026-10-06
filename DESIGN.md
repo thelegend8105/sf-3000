@@ -278,10 +278,11 @@ proactive sweep) live in the MVP.
   real repair that heals. On 2026-10-04 the fixtures in `tests/branch-proof/`
   ran green too, covering the branches a passing run never reaches
   (`declined`, `rollback_failed`, `verify_error`, the snapshot-gate refusal).
-  Remaining: prove the reworked `failed-systemd-units` (whose run is also the
-  first real test of `verify.settle_seconds`) and `eos-release-dead-repos`,
-  and grow the library of Ubuntu playbooks from problems we've really solved.
-  The test releases are in `docs/sf3000-tracker.xlsx`.
+  On 2026-10-06 the reworked `failed-systemd-units` proved itself too, with
+  the first real `verify.settle_seconds` wait, and returned to the library.
+  Remaining: prove `eos-release-dead-repos`, and grow the library of Ubuntu
+  playbooks from problems we've really solved. The test releases are in
+  `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
   map out commands + use cases and review competitor apps to keep growing the
@@ -305,9 +306,9 @@ proactive sweep) live in the MVP.
 ## 13. What already exists
 
 - `schema/playbook.schema.json` — the rulebook (enforced; rejects bad entries).
-- `playbooks/` — three playbooks, each proven on a VM (disk-full,
-  missing-tool, boot-partition-full); `candidates/` holds proposed entries,
-  including failed-services, that run only when named.
+- `playbooks/` — four playbooks, each proven on a VM (disk-full,
+  missing-tool, boot-partition-full, failed-services); `candidates/` holds
+  proposed entries that run only when named.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
@@ -335,9 +336,12 @@ when `boot-partition-full` had no autoremovable kernel left. `blocked` came on
 `tests/branch-proof/` on 2026-10-04: `declined`, `rollback_failed`, and
 `verify_error` (recorded, then undone) — and the snapshot gate's refusal, which
 refused with exit 4 before running anything. With those, every outcome the
-engine can record has been seen on a real machine. The gate refuses rather than
-snapshots: there is nothing to take a snapshot with until the snapshot layer is
-built.
+engine can record has been seen on a real machine. On 2026-10-06
+`tests/systemd-proof/` added the `verify.settle_seconds` wait: a service that
+crashed ten seconds after its restart was caught only because the check waited
+30 seconds. The same session saw the privilege refusal, which refused with
+exit 3 before running the check. The gate refuses rather than snapshots: there
+is nothing to take a snapshot with until the snapshot layer is built.
 
 The evidence is the engine's `logs/runs.jsonl`. That file is gitignored, so it
 exists only on the machine that ran it — which is why its absence on a dev box
@@ -346,13 +350,12 @@ are copied off into `evidence/` before each revert. The first copy, made on
 2026-10-03, starts at 2026-09-07 23:35 IST: something reset the log earlier
 that evening, and restoring `clean-baseline` brings no older log back. The runs
 before that survive only as transcriptions in the messages of commits 541cb09
-and a42e25c. The snapshot gate writes no record by design; its result is the
-terminal output, confirmed by the person who ran it.
+and a42e25c. The snapshot gate and the privilege refusal write no record by
+design; their results are the terminal output, confirmed by the person who ran
+them.
 
-**Not yet seen on a real machine:** the `verify.settle_seconds` wait, which the
-`failed-systemd-units` run will exercise; an undo stopped by a package-manager
-lock (`rollback_result: blocked (retryable)`); and the privilege refusal, which
-also writes no record, and no run of it was noted. All three pass offline.
+**Not yet seen on a real machine:** an undo stopped by a package-manager lock
+(`rollback_result: blocked (retryable)`). It passes offline.
 
 ---
 
@@ -608,14 +611,16 @@ and for `apt-daily-upgrade.service` that job installs upgrades. Nobody agreeing
 to "restart failed services" agreed to that. A new fix that has never run does
 not belong in the trusted library (§11), so the entry moved to `candidates/`.
 It also claimed a 24.04 test that left no record, and that claim was not
-carried over.
+carried over. It returned to the library on 2026-10-06, once that VM run had
+passed (§13).
 
 **2026-10-02 — `verify.settle_seconds`: wait, then check once.** An optional
 field (1–300). After a fix exits 0 the engine waits that long, then re-runs
 detect a single time, and records the wait in the run log. It is deliberately
 not a retry loop. A loop asks "did it ever look healthy?" — and a service that
 crashes ten seconds after starting looks healthy at second one. The question is
-whether the fix still holds after the wait.
+whether the fix still holds after the wait. It first ran on a real machine on
+2026-10-06 (§13).
 
 **2026-10-02 — A detect may ask a server, as long as it changes nothing on the
 machine.** `eos-release-dead-repos` decided "the repos are dead" from the
@@ -641,7 +646,11 @@ a real VM run.
 
 ---
 
-*Last updated: revision 11 — recorded Session 1 (2026-10-04): the fixtures in
+*Last updated: revision 12 — recorded Session 2 (2026-10-06):
+`failed-systemd-units` proved its restart fix on the VM and returned to the
+library, and the `verify.settle_seconds` wait and the privilege refusal were
+seen on a real machine for the first time; §12, §13 and §16 updated.
+Revision 11 — recorded Session 1 (2026-10-04): the fixtures in
 `tests/branch-proof/` and `tests/rollback-proof/` ran green, so every outcome
 the engine can record, and the snapshot gate's refusal, has now been seen on a
 real machine; §12 and §13 updated, and the branches still unseen named.

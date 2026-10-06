@@ -9,7 +9,7 @@ to *match and explain*, never to author commands that touch a machine.
 
 ```
 schema/playbook.schema.json   the contract every playbook must satisfy
-playbooks/*.yaml              three entries, each proven on a VM
+playbooks/*.yaml              four entries, each proven on a VM
 candidates/*.yaml             proposed entries, not yet proven — run only when named
 engine/runner.py              the engine: validate, detect, diagnose, fix
 tests/rollback-proof/         a VM fixture that exercises the rollback path on real apt
@@ -38,19 +38,22 @@ the machine is touched.
 > reclaiming enough, and `blocked` on 2026-09-09 with that lock held
 > deliberately. The fixtures in `tests/branch-proof/` covered the rest on
 > 2026-10-04: `declined`, `rollback_failed`, `verify_error`, and the
-> snapshot-gate refusal. The run records are in `evidence/`. Not yet run on a
-> real machine: the `settle_seconds` wait, which the `failed-systemd-units` run
-> will be the first to use.
+> snapshot-gate refusal. On 2026-10-06 `tests/systemd-proof/` added the
+> `settle_seconds` wait and the privilege refusal. The run records are in
+> `evidence/`. Not yet run on a real machine: an undo stopped by a
+> package-manager lock.
 >
 > **`disk-root-near-full` has healed three times** — its current command on
 > 2026-09-09 (92% → 86%), and two earlier versions on 2026-09-08 (90% → 85%).
 > Its reclaim is the apt cache and journals older than 7 days only: it does not
 > touch user data and will not rescue a disk filled by the user's own files.
 >
-> **`failed-systemd-units` left the library on 2026-10-02.** Its old fix
+> **`failed-systemd-units` is back in the library (2026-10-06).** Its old fix
 > cleared the very flag its detect counted, so it could report `healed` on a
-> broken machine. It is back in `candidates/` with a restart-based fix that
-> has not run yet.
+> broken machine. The restart-based fix that replaced it passed on the VM: a
+> service whose cause had gone healed, and one that crashed 10 seconds after
+> its restart was caught by the 30-second wait. It restarts every failed
+> service it lists, so read the list before answering y.
 
 ## Run it
 

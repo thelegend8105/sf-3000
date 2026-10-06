@@ -1,18 +1,6 @@
-# CANDIDATE - not yet vetted. Moved OUT of playbooks/ on 2026-10-02.
-#
-# WHY IT MOVED: the old fix was `systemctl reset-failed`, which clears the
-# failed flag - the very thing the detect counted. The predicate flipped
-# whether or not any service was repaired, so the engine could report
-# `healed` on a still-broken machine and destroy the diagnostic flag on the
-# way. Its source line also claimed "tested on Ubuntu 24.04"; no record of
-# that run exists. A new fix that has never run belongs here, not in the
-# trusted library.
-#
-# THE NEW FIX restarts the failed services, then waits 30s and checks once.
-# The wait is load-bearing: for Type=simple units `systemctl restart` exits 0
-# as soon as the process is forked, even if it dies a moment later. Without
-# the wait, a service that crashes ten seconds after starting would read as
-# healed.
+# BLAST RADIUS: the fix restarts EVERY failed service the detect lists, not
+# only the one the user is asking about. The engine prints that list before
+# asking y/N - read it before answering.
 #
 # SCOPE - deliberately narrower than "every failed unit":
 #   * services only (not mounts, sockets, timers);
@@ -22,7 +10,12 @@
 #     apt-daily-upgrade.service that job is installing upgrades. That is not
 #     what someone agreeing to "restart failed services" agreed to.
 # Detect and fix use the same filter, so the fix only ever restarts what the
-# detect showed - and the engine lists those units before asking y/N.
+# detect showed.
+#
+# THE WAIT is load-bearing: for Type=simple units `systemctl restart` exits 0
+# as soon as the process is forked, even if it dies a moment later. On the VM
+# (2026-10-06) a service that crashed ten seconds after its restart was caught
+# only because verify waited 30s. Checked at once, it would have read healed.
 #
 # KNOWN LIMITS, not vetted away:
 #   * a service that crashes MORE than 30s after starting reads as healed;
@@ -30,6 +23,12 @@
 #     before or after the fix - this playbook cannot see it;
 #   * if one of several restarts fails, systemctl exits non-zero and the
 #     outcome is fix_failed, even if the others recovered.
+#
+# HISTORY: until 2026-10-02 the fix was `systemctl reset-failed`, which clears
+# the failed flag - the very thing the detect counts - so the engine could
+# report healed on a still-broken machine. The entry left the library for
+# candidates/ until this restart fix was proven on a VM, which happened on
+# 2026-10-06 (DESIGN.md section 16).
 #
 # Test units for the VM run are in tests/systemd-proof/.
 id: failed-systemd-units
@@ -66,4 +65,4 @@ fix:
 verify:
   rerun: detect
   settle_seconds: 30
-source: "CANDIDATE - NOT VETTED. Restart-based fix chosen 2026-10-02 to replace `systemctl reset-failed`, which cleared the flag the detect counts and could report healed on a broken machine. Neither the new detect nor the new fix has run anywhere. The previous source line claimed 'tested on Ubuntu 24.04'; no record of that run exists, so it was not carried over."
+source: "internal - detect + fix + verify proven on Ubuntu 26.04 LTS (resolute) 2026-10-06, commit 10cb1fd, against three throwaway services from tests/systemd-proof/ - not a real service failure. A service whose cause had been removed was restarted and stayed up: healed, 1 -> 0 after the 30s wait. A service that crashed 10s after its restart was caught by the wait: verify_failed, 1 -> 1, and reverse none logged 'nothing to undo'. Checked at once, it would have read healed. A failed oneshot was present for both runs and was neither counted nor restarted (the VM journal shows one start only). Records: evidence/ubuntu-26.04-2026-10-06.jsonl. Replaces `systemctl reset-failed`, removed 2026-10-02 because it cleared the flag the detect counts; that fix's old claim of a 24.04 test left no record and was not carried over."
