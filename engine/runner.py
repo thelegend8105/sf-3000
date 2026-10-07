@@ -12,33 +12,48 @@ Fix path (P1, opt-in via --fix <id>):
   confirm -> [snapshot if gated] -> fix -> [settle] -> verify -> log
   -> rollback on failure
 
-Fixes NEVER run unless --fix names a playbook explicitly. Without it this is
-still a read-only reporting tool.
+Procedure path (opt-in via --run <id>):
+  confirm once -> hand off to a system service -> for each step:
+  check -> run -> [reboot] -> verify -> log, carrying on after each reboot
+
+Fixes NEVER run unless --fix names a playbook explicitly, and procedures never
+run unless --run names one. Without either this is still a read-only
+reporting tool.
 
 What it deliberately does NOT do yet:
-  * take snapshots (mechanism unratified — the gate refuses instead of guessing)
+  * take a snapshot before a single fix (--fix still refuses a destructive
+    one; only procedures take snapshots, with Timeshift)
   * match free-text complaints to playbooks (that's the matcher layer)
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import textwrap
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Missing deps are reported in main(), not here. The procedure service runs
+# this file at boot with --resume, partway through a release upgrade that may
+# have just replaced or removed these packages; that path reads JSON and needs
+# only the standard library.
 try:
     import yaml
     from jsonschema import Draft7Validator
 except ImportError:
-    sys.exit("Missing deps. Run: pip install pyyaml jsonschema --break-system-packages")
+    yaml = Draft7Validator = None
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "playbook.schema.json"
+PROCEDURE_SCHEMA_PATH = ROOT / "schema" / "procedure.schema.json"
 DEFAULT_LOG = ROOT / "logs" / "runs.jsonl"
 
 HEALTHY, PROBLEM, ERROR = "HEALTHY", "PROBLEM", "ERROR"
@@ -108,8 +123,8 @@ def _marks():
 MARK = _marks()
 
 
-def load_schema():
-    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+def load_schema(path: Path = SCHEMA_PATH):
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_playbooks(pb_dir: Path, validator: Draft7Validator):
@@ -511,6 +526,848 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
     return 0 if record["outcome"] == HEALED else 1
 
 
+# --- Procedures --------------------------------------------------------------
+#
+# A procedure is an ordered list of steps, each shaped like a small playbook:
+# a read-only check of whether its goal is reached, a command, and the same
+# check again as its verify. A release upgrade is the case it exists for: four
+# upgrades, a reboot after each, hours in all. No terminal survives that, so
+# after one y/N the engine hands the work to a system service. The service
+# runs a root-owned copy of this file at every boot until the last step is
+# verified or the procedure stops, then removes itself.
+#
+# Rules that carry the safety of fix_one over to a run nobody is watching:
+#   * The machine is asked, not the state file. A step whose check already
+#     passes is skipped; one that is pending only because the file says so
+#     is not trusted.
+#   * Nothing runs twice by itself. A boot that finds a step still marked
+#     "running" means the machine went down mid-step: `interrupted`.
+#   * A failed step is undone if the engine can undo it. With --take-snapshot
+#     the engine takes a Timeshift snapshot before step 1 and, when a step
+#     fails, restores it and reboots; the boot after checks that the machine
+#     really is back. Without one, the procedure stops and names the snapshot
+#     the person took.
+#   * Every stop removes the service. A failed procedure must never retry
+#     itself at every boot.
+
+PROCEDURE_STATE_DIR = Path("/var/lib/sf3000")     # root-owned: the copy and state
+PROCEDURE_LOG_DIR = Path("/var/log/sf3000")       # root-owned: records and step output
+PROCEDURE_UNIT = "sf3000-procedure.service"
+PROCEDURE_UNIT_PATH = Path("/etc/systemd/system") / PROCEDURE_UNIT
+SYSTEM_PYTHON = "/usr/bin/python3"   # the interpreter that survives an upgrade
+BLOCKED_RETRIES = 30                 # boot-time apt jobs can hold the lock a while
+BLOCKED_WAIT = 60
+
+TIMESHIFT_CONF = Path("/etc/timeshift/timeshift.json")
+SNAPSHOT_TIMEOUT = 2 * 3600
+RESTORE_TIMEOUT = 2 * 3600
+# Left out of the engine's snapshots, and so left alone by their restore
+# (Timeshift's restore skips whatever the snapshot excluded). Without this, a
+# restore would roll back the procedure's own state, and the next boot would
+# start the procedure again from step 1.
+SNAPSHOT_EXCLUDES = [
+    "/var/lib/sf3000/***",
+    "/var/log/sf3000/***",
+    f"/etc/systemd/system/{PROCEDURE_UNIT}",
+    f"/etc/systemd/system/multi-user.target.wants/{PROCEDURE_UNIT}",
+]
+
+INTERRUPTED = "interrupted"            # the machine went down while a step ran — state unknown
+SNAPSHOT_FAILED = "snapshot_failed"    # the engine's snapshot could not be taken — nothing ran
+
+PENDING, RUNNING, REBOOTING = "pending", "running", "rebooting"
+SNAPSHOTTING, RESTORING = "snapshotting", "restoring"
+DONE, FAILED, CANCELLED = "done", "failed", "cancelled"
+FINISHED = (DONE, FAILED, CANCELLED)
+
+UNIT_TEXT = """\
+[Unit]
+Description=SF 3000: carry on procedure {procedure_id} after a reboot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={python} -I {runner} --resume
+TimeoutStartSec=infinity
+# If the engine itself stops, leave the step's command running: killing a
+# release upgrade halfway is worse than letting it finish.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def load_procedures(proc_dir: Path, validator):
+    """Like load_playbooks, against the procedure schema. Returns
+    ([(procedure, path)], errors). A missing directory holds no procedures."""
+    procedures, errors = [], []
+    if not proc_dir.is_dir():
+        return procedures, errors
+    for path in sorted(proc_dir.glob("*.yaml")):
+        proc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        schema_errs = sorted(validator.iter_errors(proc), key=lambda e: e.path)
+        if schema_errs:
+            msgs = "; ".join(e.message for e in schema_errs)
+            errors.append(f"{path.name}: {msgs}")
+        else:
+            procedures.append((proc, path))
+    return procedures, errors
+
+
+def pick_step_command(step: dict, distro: str):
+    run = step.get("run", {})
+    return run.get(distro) or run.get("default")
+
+
+def state_path() -> Path:
+    return PROCEDURE_STATE_DIR / "state.json"
+
+
+def read_state():
+    try:
+        return json.loads(state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def write_state(state: dict):
+    """Write atomically and to disk: a power cut must leave either the old
+    state or the new one, never half of each."""
+    PROCEDURE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PROCEDURE_STATE_DIR / "state.json.tmp"
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(json.dumps(state, indent=2))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, state_path())
+
+
+def procedure_log_path() -> Path:
+    # Never the clone's logs/: the service writes as root at boot, and a path
+    # inside a user's home is a path that user can point somewhere else.
+    return PROCEDURE_LOG_DIR / "runs.jsonl"
+
+
+def now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def systemctl(*args) -> int:
+    proc = subprocess.run(["systemctl", *args], capture_output=True, text=True)
+    return proc.returncode
+
+
+def service_active() -> bool:
+    """Is the service doing something right now? A oneshot service that is
+    running its command is "activating", not "active", and `is-active` exits
+    non-zero for that — so read the state, not the exit code."""
+    proc = subprocess.run(["systemctl", "is-active", PROCEDURE_UNIT],
+                          capture_output=True, text=True)
+    return proc.stdout.strip() in ("active", "activating", "deactivating", "reloading")
+
+
+def reboot_machine():
+    systemctl("reboot")
+
+
+def systemd_running() -> bool:
+    return Path("/run/systemd/system").is_dir()
+
+
+def timeshift_installed() -> bool:
+    return shutil.which("timeshift") is not None
+
+
+def install_service(procedure_id: str):
+    runner = PROCEDURE_STATE_DIR / "engine" / "runner.py"
+    PROCEDURE_UNIT_PATH.write_text(UNIT_TEXT.format(
+        procedure_id=procedure_id, python=SYSTEM_PYTHON, runner=runner),
+        encoding="utf-8")
+    systemctl("daemon-reload")
+    systemctl("enable", PROCEDURE_UNIT)
+    systemctl("start", "--no-block", PROCEDURE_UNIT)
+
+
+def remove_service():
+    systemctl("disable", PROCEDURE_UNIT)
+    try:
+        PROCEDURE_UNIT_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    systemctl("daemon-reload")
+
+
+def stage_procedure(proc: dict, proc_path: Path):
+    """Copy what the service will run into a root-owned place. The service
+    runs at boot as root, so it must not run anything a user can edit — and it
+    must run exactly the text the person approved, even if the clone changes."""
+    for d in (PROCEDURE_STATE_DIR, PROCEDURE_STATE_DIR / "engine", PROCEDURE_LOG_DIR):
+        if d.is_symlink():
+            raise OSError(f"{d} is a symlink; refusing to write through it")
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o755)
+    shutil.copyfile(Path(__file__).resolve(),
+                    PROCEDURE_STATE_DIR / "engine" / "runner.py")
+    shutil.copyfile(proc_path, PROCEDURE_STATE_DIR / "procedure.yaml")
+    (PROCEDURE_STATE_DIR / "procedure.json").write_text(
+        json.dumps(proc, indent=2), encoding="utf-8")
+
+
+def run_logged(cmd, timeout: int, log_file: Path):
+    """Run a command, output to a file. Returns (exit_code, tail). exit_code is
+    None when the time limit stopped it. A string runs through the shell
+    verbatim; a list runs without one. Either way it gets its own process group,
+    so the limit stops all of it, not only the shell."""
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    shown = cmd if isinstance(cmd, str) else " ".join(cmd)
+    with log_file.open("a", encoding="utf-8") as fh:
+        fh.write(f"\n=== {now_utc()} running:\n{shown}\n===\n")
+        fh.flush()
+        proc = subprocess.Popen(cmd, shell=isinstance(cmd, str),
+                                stdin=subprocess.DEVNULL, stdout=fh,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            code = None
+    with log_file.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, fh.tell() - 8192))
+        tail = fh.read().decode("utf-8", "replace")
+    return code, tail
+
+
+def run_step(cmd: str, timeout: int, log_file: Path):
+    """Run a step, waiting out a held package-manager lock. Returns
+    (exit_code, tail, attempts). Retrying is safe only because `blocked`
+    means the package manager never started (see LOCK_CONTENTION_PATTERNS);
+    at boot, apt's own daily jobs often hold the lock for a few minutes."""
+    attempts = 0
+    while True:
+        attempts += 1
+        code, tail = run_logged(cmd, timeout, log_file)
+        if code not in (0, None) and is_lock_contention(tail) \
+                and attempts < BLOCKED_RETRIES:
+            print(f"  {MARK['arrow']} the package manager is busy — waiting "
+                  f"{BLOCKED_WAIT}s, then trying again (attempt {attempts + 1} "
+                  f"of {BLOCKED_RETRIES})", flush=True)
+            time.sleep(BLOCKED_WAIT)
+            continue
+        return code, tail, attempts
+
+
+# --- The engine's own snapshots (Timeshift, rsync mode) ----------------------
+#
+# The lab's machines are plain ext4, with no LVM or btrfs, so an instant
+# filesystem snapshot is not available. Timeshift's rsync mode copies the
+# system (not /home) into /timeshift on a disk, hard-linking what an earlier
+# snapshot already holds, and its restore puts the files back, reinstalls GRUB
+# and reboots. It can also restore from a live USB if the machine stops
+# booting, which no snapshot of the engine's own making could offer.
+
+def read_cmd(*args) -> str:
+    """A read-only query. Returns its stripped stdout, or "" on any failure."""
+    try:
+        proc = subprocess.run(list(args), capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def snapshot_devices():
+    """(root partition, its UUID, the disk GRUB lives on), or None when any of
+    them cannot be worked out — then the engine will not take a snapshot it
+    could not restore."""
+    root = read_cmd("findmnt", "-n", "-o", "SOURCE", "/")
+    uuid = read_cmd("findmnt", "-n", "-o", "UUID", "/")
+    disk = read_cmd("lsblk", "-n", "-d", "-o", "PKNAME", root) if root.startswith("/dev/") else ""
+    if not (root.startswith("/dev/") and uuid and disk):
+        return None
+    return root, uuid, f"/dev/{disk.splitlines()[0].strip()}"
+
+
+def machine_fingerprint() -> str:
+    """The release and every installed package with its version. A restore has
+    worked when this matches what it was when the snapshot was taken."""
+    release = ""
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VERSION_ID="):
+                release = line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    packages = read_cmd("dpkg-query", "-W", "-f", "${Package} ${Version} ${Status}\n")
+    digest = hashlib.sha256(packages.encode("utf-8")).hexdigest()[:16]
+    return f"{release} packages:{digest}"
+
+
+def prepare_timeshift_config(root_uuid: str):
+    """Add the engine's excludes to Timeshift's config, creating a minimal
+    rsync-mode config if there is none. Anything already there is kept."""
+    if TIMESHIFT_CONF.exists():
+        cfg = json.loads(TIMESHIFT_CONF.read_text(encoding="utf-8"))
+        if str(cfg.get("btrfs_mode", "false")).lower() == "true":
+            raise RuntimeError("Timeshift is set to btrfs mode; the engine only "
+                               "uses rsync mode")
+    else:
+        cfg = {"backup_device_uuid": root_uuid, "parent_device_uuid": "",
+               "do_first_run": "false", "btrfs_mode": "false",
+               "include_btrfs_home_for_backup": "false",
+               "include_btrfs_home_for_restore": "false",
+               "stop_cron_emails": "true",
+               "schedule_monthly": "false", "schedule_weekly": "false",
+               "schedule_daily": "false", "schedule_hourly": "false",
+               "schedule_boot": "false",
+               "count_monthly": "2", "count_weekly": "3", "count_daily": "5",
+               "count_hourly": "6", "count_boot": "5",
+               "date_format": "%Y-%m-%d %H:%M:%S",
+               "exclude": [], "exclude-apps": []}
+    if not cfg.get("backup_device_uuid"):
+        cfg["backup_device_uuid"] = root_uuid
+    excludes = cfg.setdefault("exclude", [])
+    for path in SNAPSHOT_EXCLUDES:
+        if path not in excludes:
+            excludes.append(path)
+    TIMESHIFT_CONF.parent.mkdir(parents=True, exist_ok=True)
+    TIMESHIFT_CONF.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+
+def snapshot_create_cmd(snap: dict) -> list:
+    return ["timeshift", "--create", "--rsync", "--snapshot-device", snap["device"],
+            "--comments", snap["comment"], "--tags", "O", "--scripted"]
+
+
+def snapshot_restore_cmd(snap: dict) -> list:
+    # --grub-device always: an upgrade reinstalls GRUB, and restoring the old
+    # /boot/grub under a newer boot sector can leave the machine unbootable.
+    # Timeshift 22.06 also waits for a typed answer without it or --skip-grub.
+    return ["timeshift", "--restore", "--snapshot", snap["name"],
+            "--target-device", snap["device"], "--grub-device", snap["grub_device"],
+            "--scripted", "--yes"]
+
+
+SNAPSHOT_NAME = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
+
+
+def take_snapshot(snap: dict):
+    """Returns (name, detail). name is None when no snapshot was made."""
+    try:
+        prepare_timeshift_config(snap["uuid"])
+    except (OSError, ValueError, RuntimeError) as e:
+        return None, f"could not prepare Timeshift's config: {e}"
+    log_file = PROCEDURE_LOG_DIR / "snapshot.log"
+    code, tail = run_logged(snapshot_create_cmd(snap), SNAPSHOT_TIMEOUT, log_file)
+    if code != 0:
+        return None, (f"timeshift --create {'timed out' if code is None else f'exited {code}'}"
+                      f"; see {log_file}")
+    m = re.search(r"Tagged snapshot '(" + SNAPSHOT_NAME.pattern + ")'", tail)
+    if m:
+        return m.group(1), "created"
+    # Fall back to the listing: our comment is unique to this run.
+    for line in read_cmd("timeshift", "--list", "--scripted").splitlines():
+        if snap["comment"] in line:
+            m = SNAPSHOT_NAME.search(line)
+            if m:
+                return m.group(0), "created (found by its comment)"
+    return None, f"timeshift exited 0 but the new snapshot was not found; see {log_file}"
+
+
+def step_record(state: dict, step: dict, cmd: str) -> dict:
+    snap = state.get("engine_snapshot")
+    return {
+        "timestamp": now_utc(),
+        "playbook_id": f"{state['procedure_id']}/{step['id']}",
+        "procedure_id": state["procedure_id"],
+        "step_id": step["id"],
+        "distro": state["distro"],
+        "detect_before": None,
+        "confirmed": True,              # once, for the whole procedure
+        "snapshot_taken": bool(snap and snap.get("name")),
+        "snapshot_id": (snap["name"] if snap and snap.get("name")
+                        else state["snapshot_id"]),
+        "snapshot_named": state["snapshot_id"],   # the person's own, if any
+        "fix_command": cmd,
+        "fix_exit_code": None,
+        "fix_attempts": None,
+        "timeout_seconds": step["timeout_minutes"] * 60,
+        "step_log": None,
+        "rebooted": False,
+        "settle_seconds": None,
+        "verify_after": None,
+        "verify_error": None,
+        "blocked_reason": None,
+        "failure": None,
+        "outcome": None,
+        "rollback_method": None,
+        "rollback_result": None,
+    }
+
+
+def verify_step(step: dict, record: dict) -> str:
+    status, measurement, detail = assess(step)
+    if status == HEALTHY:
+        record["verify_after"] = measurement
+        print(f"  {MARK['HEALTHY']} {step['id']} verified ({detail})", flush=True)
+        return HEALED
+    if status == ERROR:
+        record["verify_error"] = detail
+        print(f"  {MARK['ERROR']} {step['id']} ran, but its check could not "
+              f"measure the machine ({detail})", flush=True)
+        return VERIFY_ERROR
+    record["verify_after"] = measurement
+    print(f"  {MARK['PROBLEM']} {step['id']} ran, but its goal is not reached "
+          f"({detail})", flush=True)
+    return VERIFY_FAILED
+
+
+def stop_procedure(state: dict, phase: str, reason: str):
+    state["phase"] = phase
+    state["stopped_because"] = reason
+    state["finished"] = now_utc()
+    write_state(state)
+    remove_service()
+    print(f"{MARK['PROBLEM']} procedure {state['procedure_id']} stopped: {reason}",
+          flush=True)
+    snap = state.get("engine_snapshot")
+    if snap and snap.get("name") and phase == FAILED:
+        print(f"  {MARK['arrow']} the engine's snapshot is Timeshift {snap['name']}",
+              flush=True)
+    if state.get("snapshot_id"):
+        print(f"  {MARK['arrow']} the snapshot named at the start: "
+              f"{state['snapshot_id']}", flush=True)
+
+
+def fail_step(state: dict, record: dict, failure: str, reason: str, changed=True):
+    """A step did not succeed. Undo it with the engine's snapshot when there is
+    one and the step may have changed something; otherwise stop."""
+    record["failure"] = failure
+    snap = state.get("engine_snapshot")
+    if changed and snap and snap.get("name"):
+        begin_restore(state, record, f"step {record['step_id']}: {reason}")
+        return
+    record["outcome"] = failure
+    if state["reverse_strategy"] == "snapshot_only" and changed:
+        record["rollback_method"] = "snapshot_only"
+        record["rollback_result"] = ("not attempted: the engine cannot restore "
+                                     f"snapshot {state['snapshot_id']!r}")
+    log_run(record, procedure_log_path())
+    stop_procedure(state, FAILED, f"step {record['step_id']}: {reason}")
+
+
+def begin_restore(state: dict, record: dict, reason: str):
+    """Restore the engine's snapshot. Timeshift reboots when it finishes; the
+    boot after verifies (resume_procedure, phase RESTORING). The step's record
+    is written then, with the restore's result as its outcome."""
+    snap = state["engine_snapshot"]
+    record["rollback_method"] = "timeshift"
+    cmd = snapshot_restore_cmd(snap)
+    state.update(phase=RESTORING, record=record, stopped_because=reason,
+                 restore_started=now_utc())
+    write_state(state)
+    print(f"{MARK['PROBLEM']} {reason}", flush=True)
+    print(f"  {MARK['arrow']} restoring Timeshift snapshot {snap['name']}, then "
+          "rebooting", flush=True)
+    log_file = PROCEDURE_LOG_DIR / "restore.log"
+    code, _tail = run_logged(cmd, RESTORE_TIMEOUT, log_file)
+    # Still here: Timeshift did not reboot. Exit 0 is not proof — it also exits
+    # 0 when it gives up on input — so a clean exit still gets the reboot and
+    # the check after it. A failed exit may have left a half-copied system;
+    # say so and stop rather than reboot into it.
+    if code == 0:
+        reboot_machine()
+        return
+    record["outcome"] = ROLLBACK_FAILED
+    record["rollback_result"] = (f"timeshift --restore "
+                                 f"{'timed out' if code is None else f'exited {code}'}"
+                                 f"; see {log_file}")
+    log_run(record, procedure_log_path())
+    stop_procedure(state, FAILED, f"{reason}; the restore failed too — the "
+                   "machine needs a person (Timeshift can restore from a live USB)")
+
+
+def finish_restore(state: dict) -> int:
+    """First boot after a restore: is the machine really back?"""
+    record = state["record"]
+    snap = state["engine_snapshot"]
+    now = machine_fingerprint()
+    if now == snap["fingerprint"]:
+        record["outcome"] = ROLLED_BACK
+        record["rollback_result"] = f"ok: back to {now}"
+        log_run(record, procedure_log_path())
+        print(f"{MARK['HEALTHY']} restored: the machine is back as it was before "
+              f"step 1 ({now})", flush=True)
+        stop_procedure(state, FAILED, f"{state['stopped_because']}. Restored "
+                       f"Timeshift snapshot {snap['name']}.")
+        return 1
+    record["outcome"] = ROLLBACK_FAILED
+    record["rollback_result"] = (f"after the restore the machine reads {now}, "
+                                 f"not {snap['fingerprint']}")
+    log_run(record, procedure_log_path())
+    stop_procedure(state, FAILED, f"{state['stopped_because']}. The restore of "
+                   f"{snap['name']} did not bring the machine back (it reads "
+                   f"{now}). It needs a person.")
+    return 1
+
+
+def resume_procedure() -> int:
+    """The service's entry point: carry on from wherever the state says."""
+    state = read_state()
+    if state is None or state["phase"] in FINISHED:
+        print("No procedure in progress. Removing the service.", flush=True)
+        remove_service()
+        return 0
+    proc = json.loads((PROCEDURE_STATE_DIR / "procedure.json").read_text(encoding="utf-8"))
+    steps = proc["steps"]
+
+    if state["phase"] == RESTORING:
+        return finish_restore(state)
+
+    snap = state.get("engine_snapshot")
+    if snap and not snap.get("name"):
+        if state["phase"] == SNAPSHOTTING:
+            stop_procedure(state, FAILED, "the machine went down while the "
+                           "snapshot was being taken. No step had run.")
+            return 1
+        state["phase"] = SNAPSHOTTING
+        write_state(state)
+        snap["fingerprint"] = machine_fingerprint()
+        print(f"{MARK['arrow']} taking a Timeshift snapshot of {snap['device']} "
+              f"before step 1 (machine: {snap['fingerprint']})", flush=True)
+        name, detail = take_snapshot(snap)
+        if name is None:
+            log_run({"timestamp": now_utc(),
+                     "playbook_id": f"{state['procedure_id']}/snapshot",
+                     "procedure_id": state["procedure_id"], "step_id": "snapshot",
+                     "distro": state["distro"], "confirmed": True,
+                     "snapshot_taken": False, "snapshot_id": None,
+                     "fix_command": " ".join(snapshot_create_cmd(snap)),
+                     "outcome": SNAPSHOT_FAILED, "verify_error": detail},
+                    procedure_log_path())
+            stop_procedure(state, FAILED, f"no snapshot, so no step was run: {detail}")
+            return 1
+        snap["name"] = name
+        state["phase"] = PENDING
+        write_state(state)
+        print(f"  {MARK['HEALTHY']} snapshot {name} {detail}", flush=True)
+
+    while state["step"] < len(steps):
+        step = steps[state["step"]]
+        record = state.get("record")
+
+        if state["phase"] == RUNNING:
+            fail_step(state, record, INTERRUPTED,
+                      "the machine went down while it was running, so its "
+                      "state is unknown")
+            return 1
+
+        if state["phase"] == REBOOTING:
+            print(f"{MARK['arrow']} back after rebooting for {step['id']} — "
+                  "verifying", flush=True)
+            outcome = verify_step(step, record)
+            if outcome != HEALED:
+                fail_step(state, record, outcome, "its check did not pass after the reboot")
+                return 1
+            record["outcome"] = HEALED
+            log_run(record, procedure_log_path())
+            state["history"].append({"step": step["id"], "outcome": HEALED})
+            state.update(step=state["step"] + 1, phase=PENDING, record=None)
+            write_state(state)
+            continue
+
+        # PENDING: ask the machine whether this step is still needed.
+        status, measurement, detail = assess(step)
+        if status == ERROR:
+            stop_procedure(state, FAILED,
+                           f"step {step['id']}: its check failed ({detail}). "
+                           "Nothing was run.")
+            return 1
+        if status == HEALTHY:
+            print(f"{MARK['HEALTHY']} {step['id']} already done ({detail})", flush=True)
+            state["history"].append({"step": step["id"], "outcome": "already done"})
+            state.update(step=state["step"] + 1, phase=PENDING, record=None)
+            write_state(state)
+            continue
+
+        if "requires" in step:
+            r_status, _r_measure, r_detail = assess(step["requires"])
+            if r_status != HEALTHY:
+                stop_procedure(state, FAILED, f"step {step['id']}: its "
+                               f"precondition does not hold ({r_detail}). "
+                               "Nothing was run.")
+                return 1
+
+        cmd = pick_step_command(step, state["distro"])
+        record = step_record(state, step, cmd)
+        record["detect_before"] = measurement
+        log_file = PROCEDURE_LOG_DIR / f"{state['procedure_id']}-{step['id']}.log"
+        record["step_log"] = str(log_file)
+        # Marked BEFORE the command starts, so a boot that finds this mark
+        # knows the step was cut off rather than never begun.
+        state.update(phase=RUNNING, record=record)
+        write_state(state)
+
+        print(f"{MARK['arrow']} {step['id']}: {step['description']} — running "
+              f"(limit {step['timeout_minutes']} min, output in {log_file})",
+              flush=True)
+        code, tail, attempts = run_step(cmd, step["timeout_minutes"] * 60, log_file)
+        record["fix_exit_code"] = code
+        record["fix_attempts"] = attempts
+
+        if code is None:
+            fail_step(state, record, FIX_FAILED,
+                      f"stopped at its time limit of {step['timeout_minutes']} min")
+            return 1
+        if code != 0 and is_lock_contention(tail):
+            record["blocked_reason"] = (tail.strip().splitlines()[-1]
+                                        if tail.strip() else f"exit={code}")
+            fail_step(state, record, BLOCKED,
+                      f"the package manager stayed busy through {attempts} "
+                      "attempts. It never ran, so this step changed nothing; "
+                      "start the procedure again later", changed=False)
+            return 1
+        if code != 0:
+            fail_step(state, record, FIX_FAILED,
+                      f"its command failed (exit {code}); see {log_file}")
+            return 1
+
+        if step["reboot_after"]:
+            record["rebooted"] = True
+            state.update(phase=REBOOTING, record=record)
+            write_state(state)
+            print(f"{MARK['arrow']} {step['id']} exited 0 — rebooting, then "
+                  "verifying", flush=True)
+            reboot_machine()
+            return 0
+
+        outcome = verify_step(step, record)
+        if outcome != HEALED:
+            fail_step(state, record, outcome, "its check did not pass")
+            return 1
+        record["outcome"] = HEALED
+        log_run(record, procedure_log_path())
+        state["history"].append({"step": step["id"], "outcome": HEALED})
+        state.update(step=state["step"] + 1, phase=PENDING, record=None)
+        write_state(state)
+
+    state.update(phase=DONE, record=None, finished=now_utc())
+    write_state(state)
+    remove_service()
+    print(f"{MARK['HEALTHY']} procedure {state['procedure_id']} finished: every "
+          "step verified.", flush=True)
+    snap = state.get("engine_snapshot")
+    if snap and snap.get("name"):
+        print(f"  {MARK['arrow']} Timeshift snapshot {snap['name']} is kept. "
+              f"Delete it when you no longer need it: timeshift --delete "
+              f"--snapshot {snap['name']}", flush=True)
+    return 0
+
+
+def confirm_procedure(proc: dict, plan: list, distro: str, snapshot: str,
+                      engine_snap) -> bool:
+    to_do = [s for s, done in plan if not done]
+    reboots = sum(1 for s in to_do if s["reboot_after"])
+    print()
+    print("=" * 64)
+    print(f"  {proc['id']}")
+    print(f"  {proc['description']}")
+    print("-" * 64)
+    for n, (step, done) in enumerate(plan, 1):
+        state = "already done" if done else (
+            f"to do — limit {step['timeout_minutes']} min"
+            + (", then reboot" if step["reboot_after"] else ""))
+        print(f"  {n}. {step['id']}: {step['description']}")
+        print(f"     {state}")
+        if not done:
+            print(textwrap.indent(pick_step_command(step, distro), "       | "))
+    print("-" * 64)
+    print(f"  risk      : {proc['risk']}")
+    print(f"  undo      : {proc['reverse']['strategy']}")
+    if engine_snap:
+        print(f"  snapshot  : the engine takes one with Timeshift before step 1,")
+        print(f"              of {engine_snap['device']} (not /home). If a step")
+        print("              fails, it restores that snapshot and reboots by")
+        print("              itself, then checks the machine is back.")
+    if snapshot:
+        print(f"  named     : {snapshot} (yours — the engine can neither take "
+              "nor restore it)")
+    print(textwrap.fill(proc.get("source", "unrecorded"), width=64,
+                        initial_indent="  source    : ",
+                        subsequent_indent="              "))
+    print("=" * 64)
+    print(f"Once you answer y, it runs by itself: {len(to_do)} step(s), "
+          f"{reboots} reboot(s). It carries on after each reboot and removes "
+          "itself when it finishes or stops.")
+    try:
+        return input("Run this procedure? [y/N] ").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
+                    snapshot: str, take_snapshot_too: bool, log_path: Path) -> int:
+    """--run: check, confirm, then hand off to the service. Returns an exit code."""
+    ok, why = applies(proc, host_os, distro)
+    if not ok:
+        print(f"{proc['id']} does not apply to this machine ({why}). Refusing to run.")
+        return 5
+    for step in proc["steps"]:
+        if not pick_step_command(step, distro):
+            print(f"{proc['id']}: step {step['id']} has no command for distro {distro!r}.")
+            return 2
+    if not has_privilege():
+        print(f"{proc['id']} requires administrative privilege and this engine "
+              "is not running with it.")
+        print("Re-run under sudo. The engine will not add sudo to a vetted "
+              "command on your behalf.")
+        return 3
+    if needs_snapshot(proc) and not (snapshot or take_snapshot_too):
+        print(f"{proc['id']} cannot be undone (risk={proc['risk']}, "
+              f"undo={proc['reverse']['strategy']}). Refusing to run without a "
+              "snapshot. Either let the engine take one (--take-snapshot), or "
+              "take one yourself and name it (--snapshot <name>).")
+        return 4
+    engine_snap = None
+    if take_snapshot_too:
+        if not timeshift_installed():
+            print("--take-snapshot uses Timeshift, which is not installed. "
+                  "Install it first:  sudo apt-get install timeshift")
+            return 8
+        devices = snapshot_devices()
+        if devices is None:
+            print("--take-snapshot could not work out the root partition and "
+                  "the disk GRUB is on, so it could not restore a snapshot "
+                  "safely. Refusing to run.")
+            return 8
+        root, uuid, grub = devices
+        engine_snap = {"tool": "timeshift", "device": root, "uuid": uuid,
+                       "grub_device": grub, "name": None, "fingerprint": None,
+                       "comment": f"sf3000 {proc['id']} {now_utc()}"}
+    if not systemd_running():
+        print(f"{proc['id']} needs systemd to carry on after a reboot, and this "
+              "machine is not running it. Refusing to run.")
+        return 7
+    state = read_state()
+    if state is not None and state["phase"] not in FINISHED:
+        print(f"Procedure {state['procedure_id']} is already in progress "
+              f"(phase {state['phase']}). See --status; --cancel stops it "
+              "between steps.")
+        return 6
+
+    # The plan: ask the machine which steps are already done. Read-only.
+    plan = []
+    for step in proc["steps"]:
+        status, _measurement, detail = assess(step)
+        if status == ERROR:
+            print(f"{MARK['ERROR']} {proc['id']}: the check for step {step['id']} "
+                  f"failed ({detail}). Refusing to run.")
+            return 1
+        plan.append((step, status == HEALTHY))
+    first = next((s for s, done in plan if not done), None)
+    if first is None:
+        print(f"{MARK['HEALTHY']} {proc['id']}: every step is already done. "
+              "Nothing to do.")
+        return 0
+    if "requires" in first:
+        r_status, _r_measure, r_detail = assess(first["requires"])
+        if r_status != HEALTHY:
+            print(f"{proc['id']}: the first step to do, {first['id']}, does not "
+                  f"apply to this machine ({r_detail}). Refusing to run.")
+            return 5
+
+    if not confirm_procedure(proc, plan, distro, snapshot, engine_snap):
+        log_run({
+            "timestamp": now_utc(),
+            "playbook_id": proc["id"],
+            "procedure_id": proc["id"],
+            "distro": distro,
+            "confirmed": False,
+            "snapshot_id": snapshot,
+            "outcome": DECLINED,
+        }, log_path)
+        print(f"Cancelled. Nothing was run. (logged to {log_path})")
+        return 0
+
+    stage_procedure(proc, proc_path)
+    write_state({
+        "procedure_id": proc["id"],
+        "description": proc["description"],
+        "distro": distro,
+        "snapshot_id": snapshot,
+        "engine_snapshot": engine_snap,
+        "reverse_strategy": proc["reverse"]["strategy"],
+        "started": now_utc(),
+        "step": 0,
+        "phase": PENDING,
+        "record": None,
+        "history": [],
+    })
+    install_service(proc["id"])
+    print(f"\n  {MARK['arrow']} started. It now runs as the system service "
+          f"{PROCEDURE_UNIT}, so closing this terminal does not stop it.")
+    print(f"  {MARK['arrow']} watch it:   journalctl -fu {PROCEDURE_UNIT}")
+    print(f"  {MARK['arrow']} where it is: python3 engine/runner.py --status")
+    print(f"  {MARK['arrow']} records go to {procedure_log_path()}")
+    return 0
+
+
+def procedure_status() -> int:
+    state = read_state()
+    if state is None:
+        print("No procedure has been started on this machine.")
+        return 0
+    print(f"procedure : {state['procedure_id']}")
+    print(f"phase     : {state['phase']}")
+    print(f"started   : {state['started']} (UTC)")
+    snap = state.get("engine_snapshot")
+    if snap:
+        print(f"snapshot  : Timeshift {snap.get('name') or '(not taken yet)'} "
+              f"of {snap['device']}")
+    if state.get("snapshot_id"):
+        print(f"named     : {state['snapshot_id']}")
+    for h in state["history"]:
+        print(f"  {MARK['HEALTHY']} {h['step']}: {h['outcome']}")
+    if state["phase"] not in FINISHED and state["phase"] != RESTORING:
+        proc = json.loads((PROCEDURE_STATE_DIR / "procedure.json").read_text(encoding="utf-8"))
+        if state["step"] < len(proc["steps"]):
+            print(f"  {MARK['arrow']} now: {proc['steps'][state['step']]['id']} "
+                  f"({state['phase']})")
+    if state.get("stopped_because"):
+        print(f"stopped   : {state['stopped_because']}")
+    print(f"records   : {procedure_log_path()}")
+    return 0
+
+
+def cancel_procedure() -> int:
+    if not has_privilege():
+        print("--cancel requires administrative privilege. Re-run under sudo.")
+        return 3
+    state = read_state()
+    if state is None or state["phase"] in FINISHED:
+        print("No procedure in progress.")
+        remove_service()
+        return 0
+    if service_active():
+        print(f"{state['procedure_id']} is working right now (phase "
+              f"{state['phase']}). Stopping it halfway could leave the machine "
+              "broken, so --cancel refuses. Run it again once it is between steps.")
+        return 6
+    if state["phase"] in (RUNNING, RESTORING):
+        print(f"{state['procedure_id']} was cut off in phase {state['phase']}; "
+              "the next boot will deal with it. --cancel refuses.")
+        return 6
+    stop_procedure(state, CANCELLED, "cancelled by hand between steps")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="SF 3000 engine")
     ap.add_argument("--playbooks", default=str(ROOT / "playbooks"))
@@ -523,20 +1380,86 @@ def main():
                     help="JSONL run log (default: logs/runs.jsonl)")
     ap.add_argument("--os", dest="host_os", default=current_os(),
                     help="override the detected OS (testing)")
+    ap.add_argument("--procedures", default=str(ROOT / "procedures"),
+                    help="directory of procedures (default: procedures/)")
+    ap.add_argument("--run", metavar="ID",
+                    help="start a multi-step procedure (asks first; carries on "
+                         "by itself across reboots)")
+    ap.add_argument("--take-snapshot", action="store_true",
+                    help="with --run: take a Timeshift snapshot before step 1, "
+                         "and restore it by itself if a step fails")
+    ap.add_argument("--snapshot", metavar="NAME",
+                    help="with --run: the snapshot or backup you took yourself")
+    ap.add_argument("--status", action="store_true",
+                    help="show the procedure on this machine, if any")
+    ap.add_argument("--cancel", action="store_true",
+                    help="stop a procedure between steps")
+    ap.add_argument("--resume", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+
+    # These three read and write only JSON, so they work even when an upgrade
+    # has just replaced or removed pyyaml and jsonschema.
+    if args.resume:
+        # The outcome is in the records and the state file. Exit 0 either way:
+        # a non-zero exit would leave a "failed" unit behind after the service
+        # has removed itself.
+        try:
+            resume_procedure()
+        except Exception as e:
+            # Never leave a broken service to retry at every boot.
+            print(f"{MARK['ERROR']} the engine itself failed: {e!r}", flush=True)
+            traceback.print_exc()
+            try:
+                state = read_state()
+                if state is not None and state.get("phase") not in FINISHED:
+                    stop_procedure(state, FAILED, f"the engine itself failed ({e!r}); "
+                                   "the machine needs a person")
+                else:
+                    remove_service()
+            except Exception:
+                remove_service()
+        return 0
+    if args.status:
+        return procedure_status()
+    if args.cancel:
+        return cancel_procedure()
+
+    if yaml is None or Draft7Validator is None:
+        sys.exit("Missing deps. Run: pip install pyyaml jsonschema --break-system-packages")
 
     validator = Draft7Validator(load_schema())
     playbooks, errors = load_playbooks(Path(args.playbooks), validator)
+    procedures, proc_errors = load_procedures(
+        Path(args.procedures), Draft7Validator(load_schema(PROCEDURE_SCHEMA_PATH)))
 
     if errors:
         print("SCHEMA ERRORS — these playbooks were rejected:")
         for e in errors:
             print(f"  {MARK['PROBLEM']} {e}")
         print()
+    if proc_errors:
+        print("SCHEMA ERRORS — these procedures were rejected:")
+        for e in proc_errors:
+            print(f"  {MARK['PROBLEM']} {e}")
+        print()
 
     print(f"Loaded {len(playbooks)} valid playbook(s).")
+    if procedures or proc_errors:
+        print(f"Loaded {len(procedures)} valid procedure(s).")
     if args.validate_only:
-        return 1 if errors else 0
+        return 1 if (errors or proc_errors) else 0
+
+    if (args.take_snapshot or args.snapshot) and not args.run:
+        print("--take-snapshot and --snapshot go with --run.")
+        return 2
+    if args.run:
+        found = next(((p, path) for p, path in procedures if p["id"] == args.run), None)
+        if found is None:
+            print(f"No valid procedure with id {args.run!r} in {args.procedures}.")
+            return 2
+        proc, path = found
+        return start_procedure(proc, path, args.distro, args.host_os,
+                               args.snapshot, args.take_snapshot, Path(args.log))
 
     if args.fix:
         chosen = next((p for p in playbooks if p["id"] == args.fix), None)

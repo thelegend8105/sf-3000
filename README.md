@@ -9,13 +9,16 @@ to *match and explain*, never to author commands that touch a machine.
 
 ```
 schema/playbook.schema.json   the contract every playbook must satisfy
+schema/procedure.schema.json  the contract for procedures: ordered steps that survive reboots
 playbooks/*.yaml              four entries, each proven on a VM
 candidates/*.yaml             proposed entries, not yet proven — run only when named
+candidates/procedures/        proposed procedures (the 22.10 → 26.04 release upgrade)
 engine/runner.py              the engine: validate, detect, diagnose, fix
 tests/rollback-proof/         a VM fixture that exercises the rollback path on real apt
 tests/branch-proof/           VM fixtures for the snapshot gate, declined, rollback_failed, verify_error
 tests/systemd-proof/          throwaway services for the failed-systemd-units VM run
 tests/eos-proof/              the steps for the eos-release-dead-repos VM runs
+tests/procedure-proof/        a quick VM fixture and an offline proof for procedures
 tests/blocked-proof/          an offline proof of the `blocked` branch
 tests/lifecycle-proof/        an offline proof of every other lifecycle branch
 docs/sf3000-tracker.xlsx      the backlog: every problem, its status, VM runs, test versions
@@ -68,7 +71,30 @@ sudo python3 engine/runner.py --fix <id>    # actually fix one problem (asks fir
 python3 engine/runner.py --playbooks candidates   # include unproven entries
 python3 tests/blocked-proof/test_blocked.py       # offline branch proofs —
 python3 tests/lifecycle-proof/test_outcomes.py    #   no VM needed, run anywhere
+python3 tests/procedure-proof/test_procedure.py
 ```
+
+Some work is too long for one fix: a release upgrade is four upgrades and a
+reboot after each. A **procedure** is an ordered list of steps, each with its
+own check, command, time limit and verify. You confirm once; the engine then
+hands the work to a system service, which carries on after every reboot and
+removes itself when the procedure finishes or stops. Its records go to
+`/var/log/sf3000/runs.jsonl`.
+
+```bash
+sudo python3 engine/runner.py --procedures candidates/procedures \
+     --run release-upgrade-to-26.04 --take-snapshot  # asks first
+python3 engine/runner.py --status                    # where it is
+journalctl -fu sf3000-procedure                      # watch it
+sudo python3 engine/runner.py --cancel               # stop it between steps
+```
+
+A procedure that cannot be undone needs a snapshot first. `--take-snapshot`
+has the engine take one with Timeshift before step 1, and restore it by
+itself if a step fails; the boot after checks that the machine really is
+back. `--snapshot <name>` records one you took yourself (a VM snapshot, a
+disk image), which the engine cannot restore. Procedures are built and pass
+offline; none has run on a VM yet.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this
@@ -132,6 +158,7 @@ outright (try `--validate-only` against a broken file to see it bite).
 
 ## Not built yet (on purpose)
 
-Snapshots (the gate refuses destructive fixes rather than guessing a
-mechanism), the matcher, the CLI/TUI, Fedora/Windows fix *verification* (needs
-real machines), and the fleet dashboard.
+Snapshots for single fixes (`--fix` still refuses a destructive fix; only
+procedures can take one, with Timeshift), the matcher, the CLI/TUI,
+Fedora/Windows fix *verification* (needs real machines), and the fleet
+dashboard.

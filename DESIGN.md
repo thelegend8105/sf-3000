@@ -243,6 +243,14 @@ distro.
 - **Verify after fix** — never assume success; re-run the check to prove it.
   A check that *errors* has not proved anything either, and is reported as
   such rather than as a failed fix (see §16).
+- **Procedures carry these rules across reboots.** Work too long for one fix
+  (a release upgrade) is a procedure: ordered steps, each with its own check,
+  time limit and verify. The person confirms once; a system service runs a
+  root-owned copy of the engine at each boot until the last step verifies or
+  the procedure stops, then removes itself. A step cut off by a crash is never
+  re-run by itself. A procedure that cannot be undone starts only with a
+  snapshot: the engine's own (Timeshift), which it restores by itself when a
+  step fails, or one the person names (see §16).
 
 ---
 
@@ -282,8 +290,12 @@ proactive sweep) live in the MVP.
   the first real `verify.settle_seconds` wait, and returned to the library.
   On 2026-10-07 `eos-release-dead-repos` healed on 22.10, the lab's own
   release; its detect then changed to skip comments (§16) and healed there
-  again. Remaining: finish proving it (24.10 must heal; 20.04 and 25.04 must
-  stay healthy), and grow the library of Ubuntu playbooks from problems we've
+  again. The same day, procedures and the engine's own snapshots were built
+  for the lab's real goal, an in-place upgrade from 22.10 to 26.04; they pass
+  offline and have not yet run on a VM. Remaining: prove procedures on the VM
+  (`tests/procedure-proof/`, then the upgrade itself), finish proving
+  `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
+  healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
@@ -311,9 +323,14 @@ proactive sweep) live in the MVP.
 - `playbooks/` — four playbooks, each proven on a VM (disk-full,
   missing-tool, boot-partition-full, failed-services); `candidates/` holds
   proposed entries that run only when named.
+- `schema/procedure.schema.json` — the rulebook for procedures.
+- `candidates/procedures/` — `release-upgrade-to-26.04`, never run.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
+  With `--run <id>` it starts a procedure (`--take-snapshot` or
+  `--snapshot <name>` when it cannot be undone); `--status` and `--cancel`
+  follow it.
 - `tests/rollback-proof/` — a fixture whose only job is to make the rollback
   path actually execute, on real apt. Repeatable since 2026-10-02.
 - `tests/branch-proof/` — VM fixtures for the snapshot gate, `declined`,
@@ -323,6 +340,9 @@ proactive sweep) live in the MVP.
 - `tests/eos-proof/` — the steps for the `eos-release-dead-repos` VM runs.
   Nothing is induced: an end-of-life release installed offline is already
   broken the way the lab's machines were.
+- `tests/procedure-proof/` — a VM fixture for procedures (a reboot, a time
+  limit, a snapshot and its restore) and an offline proof of every procedure
+  branch.
 - `tests/blocked-proof/`, `tests/lifecycle-proof/` — offline proofs of every
   lifecycle branch.
 - `docs/sf3000-tracker.xlsx` — the backlog, its status, the VM run log and the
@@ -390,6 +410,8 @@ the contract everything else plugs into.
 - Where does the library live and how are entries reviewed (a Git repo with
   pull requests)?
 - How do we take a safe "snapshot" before a destructive fix on each OS?
+  *Partly answered 2026-10-07 (§16): on Ubuntu, Timeshift in rsync mode, for
+  procedures. Single fixes still refuse.*
 - How much should the AI explain to the user vs. keep simple?
 - How do we test playbooks safely without breaking real machines (throwaway
   VMs/containers)?
@@ -663,9 +685,65 @@ more than the system acts on can call a healthy machine broken. The changed
 detect ran on 22.10 the same day: it counted 10, and with only the comments
 left on the old address it read healthy.
 
+**2026-10-07 — Procedures: multi-step work runs under a system service.** The
+lab's real goal is moving a machine from 22.10 to 26.04 in place: four
+upgrades, a reboot after each, hours in all. One fix cannot hold that — the
+600-second limit kills it, nothing survives the reboot, and no terminal stays
+open that long. A procedure is a new kind of entry with its own schema: ordered
+steps, each with a read-only check of whether its goal is reached, a command,
+a time limit of up to 12 hours, and an optional reboot. The person confirms
+once. The engine then copies itself and the procedure into
+`/var/lib/sf3000/` (root-owned, so a user cannot change what runs as root at
+boot, and the approved text cannot change underneath it), installs
+`sf3000-procedure.service`, and starts it. At each boot the service asks the
+machine which steps are done, verifies the one it rebooted for, and runs the
+next. It removes itself when the procedure finishes or stops.
+
+*Why each rule:* the state file is marked before a step's command starts, so
+a boot that finds a step still "running" knows it was cut off — that is the
+new outcome `interrupted`, and the step is never re-run by itself. The resume
+path reads JSON and needs only the standard library, because an upgrade may
+replace or remove pyyaml and jsonschema partway. The service writes its
+records to `/var/log/sf3000/`, never into a user's clone, since a root process
+writing to a user-controlled path at boot is a path that user can redirect.
+`KillMode=process`: if the engine itself dies, the step's command keeps
+running, because killing an upgrade halfway is worse than letting it finish.
+
+**2026-10-07 — The snapshot gate opens for procedures, two ways.** A procedure
+that cannot be undone (`risk: destructive` or `snapshot_only`) still refuses
+to start without a snapshot. The person either names one they took
+(`--snapshot <name>`: a VM snapshot or disk image, recorded but not restorable
+by the engine) or lets the engine take one (`--take-snapshot`). The lab's
+machines are plain ext4, with no LVM or btrfs, so the engine uses Timeshift in
+rsync mode: it copies the system (not `/home`) into `/timeshift`, its restore
+reinstalls GRUB, and it can restore from a live USB when a machine no longer
+boots. Single fixes (`--fix`) still refuse a destructive fix.
+
+**2026-10-07 — A failed step is restored automatically, and the restore is
+verified.** Chosen by the person who runs the lab, over the alternative of a
+restore command run by hand. When a step fails, times out, is cut off, or its
+check does not pass after the reboot, the service restores the engine's
+snapshot; Timeshift reboots when it finishes. The boot after compares the
+machine with a fingerprint taken just before the snapshot: the release and
+every installed package with its version. A match is `rolled_back`; anything
+else is `rollback_failed`, and the procedure stops for a person. Timeshift's
+exit code is not trusted, because it also exits 0 when it gives up. Two cases
+restore nothing: a step blocked by a busy package manager (it never ran), and
+a precondition that does not hold (nothing was run).
+
+*Why the engine's files are excluded from its snapshots:* Timeshift's restore
+leaves alone whatever the snapshot excluded. Without that, a restore would roll
+back the procedure's own state file to "step 1 pending", and the machine would
+start the upgrade again, fail again and restore again, forever. The engine adds
+its state directory, its log directory, and its service file and enable link to
+Timeshift's exclude list, and changes nothing else in Timeshift's config.
+
 ---
 
-*Last updated: revision 15 — the comment-skipping detect re-ran on 22.10
+*Last updated: revision 16 — procedures, the engine's own Timeshift
+snapshots and automatic restore (2026-10-07), built and passing offline, not
+yet run on a VM; §10, §12, §13, §15 and §16 updated.
+Revision 15 — the comment-skipping detect re-ran on 22.10
 (2026-10-07): healed twice, and read healthy with only comments left old;
 §12, §13 and §16 updated.
 Revision 14 — `eos-release-dead-repos`' detect now counts

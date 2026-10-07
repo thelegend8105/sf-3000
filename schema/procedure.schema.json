@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SF3000 Procedure",
+  "description": "An ordered set of steps too long or too disruptive for one fix, such as a release upgrade. Each step is checked, run and verified on its own, and the machine may reboot between steps. The engine runs the steps from a root-owned copy under a system service, so they carry on after each reboot.",
+  "type": "object",
+  "required": ["id", "description", "applies_to", "risk", "requires_privilege", "reverse", "steps", "source"],
+  "additionalProperties": false,
+  "definitions": {
+    "check": {
+      "type": "object",
+      "required": ["detect", "expect"],
+      "additionalProperties": false,
+      "description": "A read-only question about the machine and the answer that counts as yes. Same rules as a playbook's detect and expect.",
+      "properties": {
+        "detect": { "$ref": "#/definitions/detect" },
+        "expect": { "$ref": "#/definitions/expect" }
+      }
+    },
+    "detect": {
+      "type": "object",
+      "required": ["command", "produces"],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "READ-ONLY command. Must not mutate the system."
+        },
+        "produces": {
+          "type": "string",
+          "enum": ["integer", "string", "exit_code", "line_count"]
+        }
+      }
+    },
+    "expect": {
+      "type": "object",
+      "required": ["predicate"],
+      "additionalProperties": false,
+      "properties": {
+        "predicate": {
+          "type": "string",
+          "enum": ["less_than", "greater_than", "equals", "not_equals", "contains", "not_contains", "regex_match", "exit_zero"]
+        },
+        "value": {}
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["id", "description", "detect", "expect", "run", "timeout_minutes", "reboot_after"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "One plain-language line: what this step does."
+        },
+        "requires": {
+          "$ref": "#/definitions/check",
+          "description": "Optional precondition, checked just before the step runs. If it does not hold, the procedure stops without running the step."
+        },
+        "detect": {
+          "$ref": "#/definitions/detect",
+          "description": "READ-ONLY. With expect, answers: has this step's goal been reached? A step whose goal is already reached is skipped, and the same check verifies the step after it runs (after the reboot, when reboot_after is true)."
+        },
+        "expect": { "$ref": "#/definitions/expect" },
+        "run": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "description": "The step's vetted command(s), keyed by distro or 'default'. Run verbatim, with no terminal: it must not ask questions."
+        },
+        "timeout_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720,
+          "description": "How long the command may run. When it is exceeded, the engine stops the command and the procedure. Set it generously: a step stopped halfway may leave the machine needing its snapshot."
+        },
+        "reboot_after": {
+          "type": "boolean",
+          "description": "Reboot once the command exits 0, and verify the step after the machine comes back."
+        }
+      }
+    }
+  },
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "description": "Unique, filename-safe identifier."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line, plain-language statement of what the procedure does."
+    },
+    "symptoms": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Free-text user complaints, used only for matching. Never executed."
+    },
+    "applies_to": {
+      "type": "object",
+      "required": ["os"],
+      "additionalProperties": false,
+      "properties": {
+        "os": { "type": "string", "enum": ["linux"] },
+        "distros": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["safe", "moderate", "destructive"]
+    },
+    "requires_privilege": {
+      "const": true,
+      "description": "Always true: the engine installs a system service to carry the procedure across reboots."
+    },
+    "reverse": {
+      "type": "object",
+      "required": ["strategy"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["snapshot_only", "none"],
+          "description": "snapshot_only = the only way back is a snapshot or backup taken before the start; the engine refuses to start until the person names one. none = nothing to undo."
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/step" }
+    },
+    "source": {
+      "type": "string",
+      "description": "Provenance: who vetted this and where it was tested."
+    }
+  }
+}

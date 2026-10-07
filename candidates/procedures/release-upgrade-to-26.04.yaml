@@ -1,0 +1,187 @@
+# CANDIDATE - not yet vetted. The lab's real goal: get a machine off 22.10
+# (end of life) and onto the current LTS, in place, one release at a time.
+#
+# Run it with the engine's own snapshot, so a failed step is undone by itself:
+#   sudo python3 engine/runner.py --procedures candidates/procedures \
+#        --run release-upgrade-to-26.04 --take-snapshot
+#
+# PRECONDITION: apt works. On a lab machine that means eos-release-dead-repos
+# has healed first (apt points at old-releases). Step 1's `apt-get update`
+# fails otherwise, before anything is changed.
+#
+# WHY STEPS 1 AND 2 FETCH THEIR UPGRADER BY HAND. Checked 2026-10-07 in the
+# source (update-manager's MetaRelease.py, branch ubuntu/kinetic): plain
+# `do-release-upgrade` skips every newer release marked "Supported: 0" in
+# changelogs.ubuntu.com/meta-release. 23.04 and 23.10 are both marked so, so
+# on 22.10 it would offer 24.04 directly, and the 24.04 upgrader is built to
+# upgrade from 23.10 (its DistUpgrade.cfg: From=mantic), not 22.10. `-d` does
+# not help: meta-release-development no longer lists 22.10. So these two steps
+# do what Ubuntu's EOLUpgrades page describes: download the next release's
+# upgrader from old-releases (the same URLs meta-release lists), check its
+# signature against Ubuntu's archive keyring - the keyring do-release-upgrade
+# itself checks with - and run it.
+#
+# Steps 3 and 4 are ordinary `do-release-upgrade`: from 23.10 the next
+# supported release is 24.04, and from 24.04 it is 26.04 (LTS to LTS).
+#
+# OLD-RELEASES. The 23.04 and 23.10 upgraders keep a source on old-releases
+# when the target is not on the main archive (they test the archive first).
+# The 24.04 upgrader replaces old-releases addresses with the main archive,
+# so step 3 should move apt back by itself. Read in the source, not yet seen
+# on a machine.
+#
+# UNATTENDED. Every step runs under the engine's service, with no terminal:
+#   * the upgrader's DistUpgradeViewNonInteractive answers yes to every
+#     question, keeps the existing version of a changed config file, and does
+#     not reboot by itself (RealReboot=no); the engine reboots instead;
+#   * apt-get gets --force-confdef/--force-confold for the same config-file
+#     choice, and DEBIAN_FRONTEND=noninteractive for debconf;
+#   * NEEDRESTART_SUSPEND=1 keeps needrestart from restarting services
+#     mid-step - the engine's own service among them;
+#   * RELEASE_UPGRADER_NO_SCREEN=1: the upgrader would otherwise re-run itself
+#     inside GNU screen, which needs a terminal.
+#
+# THE CHECK. Each step's goal is "this release or newer, and dpkg reports no
+# half-installed packages" (`dpkg --audit` prints nothing). VERSION_ID 22.10
+# reads as 2210, so "23.04 or newer" is "greater than 2303". A step whose goal
+# is already reached is skipped, so the procedure also finishes a machine that
+# is already partway up. Each step also requires the exact release it upgrades
+# from, so it never runs an upgrader built for another release.
+id: release-upgrade-to-26.04
+description: Upgrade an end-of-life Ubuntu 22.10 machine in place, one release at a time, to Ubuntu 26.04 LTS
+symptoms:
+  - "my Ubuntu is too old"
+  - "upgrade to the latest Ubuntu"
+  - "this Ubuntu release is no longer supported"
+applies_to:
+  os: linux
+  distros: [ubuntu]
+risk: destructive           # an upgrade cannot be undone, and can stop a machine booting
+requires_privilege: true
+reverse:
+  strategy: snapshot_only   # the way back is a snapshot: --take-snapshot, or one you name
+steps:
+  - id: to-23.04
+    description: 22.10 to 23.04 (end of life; its upgrader comes from old-releases)
+    requires:
+      detect:
+        command: '. /etc/os-release && echo "$VERSION_CODENAME"'
+        produces: string
+      expect:
+        predicate: equals
+        value: kinetic
+    detect:
+      command: |-
+        . /etc/os-release
+        if [ -n "$(dpkg --audit 2>&1)" ]; then echo 0; else echo "$VERSION_ID" | tr -d .; fi
+      produces: integer
+    expect:
+      predicate: greater_than
+      value: 2303
+    run:
+      ubuntu: |-
+        set -e
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+        dir=$(mktemp -d)
+        cd "$dir"
+        url=http://old-releases.ubuntu.com/ubuntu/dists/lunar-updates/main/dist-upgrader-all/current
+        for f in lunar.tar.gz lunar.tar.gz.gpg; do
+          python3 -I -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$url/$f" "$f"
+        done
+        gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg lunar.tar.gz.gpg lunar.tar.gz
+        tar -xzf lunar.tar.gz
+        ./lunar --mode=server --frontend=DistUpgradeViewNonInteractive
+    timeout_minutes: 360
+    reboot_after: true
+
+  - id: to-23.10
+    description: 23.04 to 23.10 (end of life; its upgrader comes from old-releases)
+    requires:
+      detect:
+        command: '. /etc/os-release && echo "$VERSION_CODENAME"'
+        produces: string
+      expect:
+        predicate: equals
+        value: lunar
+    detect:
+      command: |-
+        . /etc/os-release
+        if [ -n "$(dpkg --audit 2>&1)" ]; then echo 0; else echo "$VERSION_ID" | tr -d .; fi
+      produces: integer
+    expect:
+      predicate: greater_than
+      value: 2309
+    run:
+      ubuntu: |-
+        set -e
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+        dir=$(mktemp -d)
+        cd "$dir"
+        url=http://old-releases.ubuntu.com/ubuntu/dists/mantic-updates/main/dist-upgrader-all/current
+        for f in mantic.tar.gz mantic.tar.gz.gpg; do
+          python3 -I -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$url/$f" "$f"
+        done
+        gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg mantic.tar.gz.gpg mantic.tar.gz
+        tar -xzf mantic.tar.gz
+        ./mantic --mode=server --frontend=DistUpgradeViewNonInteractive
+    timeout_minutes: 360
+    reboot_after: true
+
+  - id: to-24.04
+    description: 23.10 to 24.04 LTS (do-release-upgrade; apt moves back to the main archive)
+    requires:
+      detect:
+        command: '. /etc/os-release && echo "$VERSION_CODENAME"'
+        produces: string
+      expect:
+        predicate: equals
+        value: mantic
+    detect:
+      command: |-
+        . /etc/os-release
+        if [ -n "$(dpkg --audit 2>&1)" ]; then echo 0; else echo "$VERSION_ID" | tr -d .; fi
+      produces: integer
+    expect:
+      predicate: greater_than
+      value: 2403
+    run:
+      ubuntu: |-
+        set -e
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+        do-release-upgrade -f DistUpgradeViewNonInteractive
+    timeout_minutes: 360
+    reboot_after: true
+
+  - id: to-26.04
+    description: 24.04 LTS to 26.04 LTS (do-release-upgrade)
+    requires:
+      detect:
+        command: '. /etc/os-release && echo "$VERSION_CODENAME"'
+        produces: string
+      expect:
+        predicate: equals
+        value: noble
+    detect:
+      command: |-
+        . /etc/os-release
+        if [ -n "$(dpkg --audit 2>&1)" ]; then echo 0; else echo "$VERSION_ID" | tr -d .; fi
+      produces: integer
+    expect:
+      predicate: greater_than
+      value: 2603
+    run:
+      ubuntu: |-
+        set -e
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+        do-release-upgrade -f DistUpgradeViewNonInteractive
+    timeout_minutes: 360
+    reboot_after: true
+source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Never run. Planned: tests/procedure-proof/ on the 22.10 VM first, then this from its repos-fixed snapshot with --take-snapshot."

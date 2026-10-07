@@ -1,0 +1,57 @@
+# VM fixture for the procedure machinery, before any real upgrade trusts it.
+# Three quick steps that leave marker files in /var/lib/sf3000-proof/:
+#   one   - touches a marker, then the engine reboots and verifies after boot
+#   two   - touches a marker, verified at once (no reboot)
+#   three - sleeps 5 minutes against a 1-minute limit, so the engine must stop
+#           it; marker three must never appear
+# Without a snapshot the procedure stops at three (fix_failed), leaving one
+# and two. With --take-snapshot the engine restores its snapshot instead, and
+# the boot after must find the markers gone and the machine as it was
+# (rolled_back). See README.md.
+id: procedure-proof
+description: Fixture - three marker steps, a reboot, and a step that overruns its time limit
+applies_to:
+  os: linux
+  distros: [ubuntu]
+risk: moderate
+requires_privilege: true
+reverse:
+  strategy: none
+steps:
+  - id: one
+    description: Touch marker one, then reboot
+    detect:
+      command: '[ -e /var/lib/sf3000-proof/one ] && echo 1 || echo 0'
+      produces: integer
+    expect:
+      predicate: equals
+      value: 1
+    run:
+      default: mkdir -p /var/lib/sf3000-proof && touch /var/lib/sf3000-proof/one
+    timeout_minutes: 1
+    reboot_after: true
+  - id: two
+    description: Touch marker two
+    detect:
+      command: '[ -e /var/lib/sf3000-proof/two ] && echo 1 || echo 0'
+      produces: integer
+    expect:
+      predicate: equals
+      value: 1
+    run:
+      default: touch /var/lib/sf3000-proof/two
+    timeout_minutes: 1
+    reboot_after: false
+  - id: three
+    description: Sleep 5 minutes against a 1-minute limit
+    detect:
+      command: '[ -e /var/lib/sf3000-proof/three ] && echo 1 || echo 0'
+      produces: integer
+    expect:
+      predicate: equals
+      value: 1
+    run:
+      default: sleep 300 && touch /var/lib/sf3000-proof/three
+    timeout_minutes: 1
+    reboot_after: false
+source: "TEST FIXTURE - not a library entry. Exercises the procedure lifecycle on a VM: hand-off to the service, a reboot and the verify after it, the time limit, and (with --take-snapshot) the engine's snapshot and its restore."
