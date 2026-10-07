@@ -15,6 +15,7 @@ engine/runner.py              the engine: validate, detect, diagnose, fix
 tests/rollback-proof/         a VM fixture that exercises the rollback path on real apt
 tests/branch-proof/           VM fixtures for the snapshot gate, declined, rollback_failed, verify_error
 tests/systemd-proof/          throwaway services for the failed-systemd-units VM run
+tests/eos-proof/              the steps for the eos-release-dead-repos VM runs
 tests/blocked-proof/          an offline proof of the `blocked` branch
 tests/lifecycle-proof/        an offline proof of every other lifecycle branch
 docs/sf3000-tracker.xlsx      the backlog: every problem, its status, VM runs, test versions

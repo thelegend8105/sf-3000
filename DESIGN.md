@@ -280,9 +280,10 @@ proactive sweep) live in the MVP.
   (`declined`, `rollback_failed`, `verify_error`, the snapshot-gate refusal).
   On 2026-10-06 the reworked `failed-systemd-units` proved itself too, with
   the first real `verify.settle_seconds` wait, and returned to the library.
-  Remaining: prove `eos-release-dead-repos`, and grow the library of Ubuntu
-  playbooks from problems we've really solved. The test releases are in
-  `docs/sf3000-tracker.xlsx`.
+  On 2026-10-07 `eos-release-dead-repos` healed on 22.10, the lab's own
+  release. Remaining: finish proving it (24.10 must heal; 20.04 and 25.04
+  must stay healthy), and grow the library of Ubuntu playbooks from problems
+  we've really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
   map out commands + use cases and review competitor apps to keep growing the
@@ -318,6 +319,9 @@ proactive sweep) live in the MVP.
   `rollback_failed` and `verify_error`.
 - `tests/systemd-proof/` — throwaway services for the `failed-systemd-units`
   VM run.
+- `tests/eos-proof/` — the steps for the `eos-release-dead-repos` VM runs.
+  Nothing is induced: an end-of-life release installed offline is already
+  broken the way the lab's machines were.
 - `tests/blocked-proof/`, `tests/lifecycle-proof/` — offline proofs of every
   lifecycle branch.
 - `docs/sf3000-tracker.xlsx` — the backlog, its status, the VM run log and the
@@ -341,7 +345,10 @@ engine can record has been seen on a real machine. On 2026-10-06
 crashed ten seconds after its restart was caught only because the check waited
 30 seconds. The same session saw the privilege refusal, which refused with
 exit 3 before running the check. The gate refuses rather than snapshots: there
-is nothing to take a snapshot with until the snapshot layer is built.
+is nothing to take a snapshot with until the snapshot layer is built. On
+2026-10-07 the engine ran on a second release for the first time: on 22.10,
+the candidate `eos-release-dead-repos` healed twice, with its undo run by hand
+in between.
 
 The evidence is the engine's `logs/runs.jsonl`. That file is gitignored, so it
 exists only on the machine that ran it — which is why its absence on a dev box
@@ -646,7 +653,11 @@ a real VM run.
 
 ---
 
-*Last updated: revision 12 — recorded Session 2 (2026-10-06):
+*Last updated: revision 13 — recorded Session 3 (2026-10-07):
+`eos-release-dead-repos` healed twice on 22.10, the first engine runs on a
+release other than 26.04; it stays a candidate until 24.10, 20.04 and 25.04
+have run; §12 and §13 updated.
+Revision 12 — recorded Session 2 (2026-10-06):
 `failed-systemd-units` proved its restart fix on the VM and returned to the
 library, and the `verify.settle_seconds` wait and the privilege refusal were
 seen on a real machine for the first time; §12, §13 and §16 updated.

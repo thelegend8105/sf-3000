@@ -14,6 +14,9 @@ Copy it off the VM like this (on Windows, from the repo):
 
     scp -P 2222 rht@127.0.0.1:sf-3000/logs/runs.jsonl evidence/ubuntu-26.04-<date>.jsonl
 
+Each VM has its own SSH port: 2222 for 26.04, 2223 for 22.10. The tracker's
+Ubuntu versions sheet lists them all.
+
 **Timestamps are UTC.** The project's dates are IST (UTC+05:30), the same as
 its commits. So a run logged at `2026-09-07T19:14Z` is dated 2026-09-08 in
 the tracker and the docs.
@@ -104,3 +107,39 @@ screenshot and confirmed by the person who ran it:
 The journal shows whole seconds. The first crash shows 12 seconds after its
 start, not 10; the second shows 10. Each crash came well before the next
 check.
+
+### `ubuntu-22.10-2026-10-07.jsonl`
+
+Session 3: `eos-release-dead-repos`, following `tests/eos-proof/`. 2 runs on
+`KineticServer` (Ubuntu 22.10, kinetic), 2026-10-07 11:10 and 11:12 IST,
+commit `4410bee`. The VM was fresh from its `clean-baseline` snapshot, and
+the repo was cloned onto it that morning. Copied off at 11:15 IST. These are
+the first records from a release other than 26.04, and the first run of this
+detect anywhere.
+
+- Line 1: `healed`. The detect found 20 old-archive addresses, the fix
+  rewrote them, and the check found 0.
+- Line 2: `healed` again, 2 minutes later, after the undo was run by hand.
+  It found the same 20, then 0.
+
+Both records' `fix_command` matches the playbook's fix text exactly.
+
+**Why 20, not 10.** The VM's sources.list has 10 active `deb` lines. Each
+has a commented-out `# deb-src` twin with the same address, and the detect
+counts those too. After the second fix, `grep -c` on the backup copy
+(`sources.list.sf3000.bak`, the original file) counted 10 `deb` lines and
+10 `# deb-src` lines.
+
+The other results write no record. They come from the terminal, confirmed by
+the person who ran it:
+
+- `df -h / /home` showed `/` and `/home` on separate partitions.
+- `apt-get update` failed before the fix ("does not have a Release file"),
+  and was clean after each fix.
+- The sweep before the first fix left `/etc/apt/sources.list`'s sha256
+  unchanged. The detect changed nothing.
+- The playbook's `reverse` text, run by hand between the two fixes, brought
+  back the original file: its sha256 matched the first one.
+
+The VM was not reverted afterwards. It was powered off and saved as the
+snapshot `repos-fixed`, the starting point for the hand-run upgrade demo.

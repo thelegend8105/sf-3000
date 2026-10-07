@@ -31,6 +31,12 @@
 # KNOWN LIMIT: verify proves the sources were rewritten, not that `apt-get
 # update` now succeeds. Proving that requires a mutation, so it stays a manual
 # check after the run.
+#
+# KNOWN LIMIT, seen on the 22.10 VM 2026-10-07: the count includes
+# commented-out lines. That install has 10 `deb` lines, each with a
+# `# deb-src` twin, and the detect found 20. The fix rewrites both, so it
+# still heals. But on a machine whose active lines were already fixed by hand,
+# old addresses left in comments would still read as a problem.
 id: eos-release-dead-repos
 description: This Ubuntu release is end-of-support, its packages have moved to old-releases, and apt still points at the old address
 symptoms:
@@ -93,4 +99,4 @@ fix:
     done
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files); the reworked detect has not run anywhere. Planned VM runs: 22.10 and 24.10 must report a problem and heal; 20.04 and 25.04 must report healthy."
+source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files). Healed twice on Ubuntu 22.10 (kinetic) on 2026-10-07, with the reverse command run by hand in between (tests/eos-proof/, evidence/ubuntu-22.10-2026-10-07.jsonl). Still owed: 24.10 must heal; 20.04 and 25.04 must report healthy."
