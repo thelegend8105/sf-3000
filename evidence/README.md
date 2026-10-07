@@ -128,7 +128,8 @@ Both records' `fix_command` matches the playbook's fix text exactly.
 has a commented-out `# deb-src` twin with the same address, and the detect
 counts those too. After the second fix, `grep -c` on the backup copy
 (`sources.list.sf3000.bak`, the original file) counted 10 `deb` lines and
-10 `# deb-src` lines.
+10 `# deb-src` lines. The detect was changed later that day to skip
+comments, so these records come from the older detect.
 
 The other results write no record. They come from the terminal, confirmed by
 the person who ran it:

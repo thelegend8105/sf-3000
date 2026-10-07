@@ -6,7 +6,8 @@
 # detect changes nothing on the machine. It reports a problem only when ALL
 # of these hold:
 #   1. the release is past its EOL date (distro-info-data, already on disk);
-#   2. apt's sources still point at archive/security.ubuntu.com;
+#   2. apt's active lines (not comments) still point at
+#      archive/security.ubuntu.com;
 #   3. archive.ubuntu.com no longer serves this release (HTTP 404) AND
 #      old-releases.ubuntu.com does (HTTP 200).
 #
@@ -32,11 +33,14 @@
 # update` now succeeds. Proving that requires a mutation, so it stays a manual
 # check after the run.
 #
-# KNOWN LIMIT, seen on the 22.10 VM 2026-10-07: the count includes
+# Corrected 2026-10-07, after the 22.10 VM run: the count included
 # commented-out lines. That install has 10 `deb` lines, each with a
-# `# deb-src` twin, and the detect found 20. The fix rewrites both, so it
-# still heals. But on a machine whose active lines were already fixed by hand,
-# old addresses left in comments would still read as a problem.
+# `# deb-src` twin, and the detect found 20. It still healed, because the fix
+# rewrites both. But on a machine whose active lines were already fixed by
+# hand, old addresses left only in comments read as a problem. The detect now
+# drops everything from `#` to the end of each line before counting, the way
+# apt reads a one-line sources.list. The fix still rewrites comments too, so a
+# `deb-src` line uncommented later points at old-releases as well.
 id: eos-release-dead-repos
 description: This Ubuntu release is end-of-support, its packages have moved to old-releases, and apt still points at the old address
 symptoms:
@@ -52,7 +56,7 @@ detect:
     csv=/usr/share/distro-info/ubuntu.csv
     [ -r "$csv" ] || { echo "cannot read $csv" >&2; exit 1; }
     awk -F, -v s="$VERSION_CODENAME" -v today="$(date +%F)" '$3 == s && $6 != "" && $6 < today { e = 1 } END { exit e ? 0 : 1 }' "$csv" || { echo 0; exit 0; }
-    n=$(grep -hoE 'https?://([a-z0-9.-]*archive|security)\.ubuntu\.com/ubuntu' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | wc -l)
+    n=$(sed 's/#.*//' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | grep -oE 'https?://([a-z0-9.-]*archive|security)\.ubuntu\.com/ubuntu' | wc -l)
     [ "$n" -eq 0 ] && { echo 0; exit 0; }
     python3 - "$VERSION_CODENAME" <<'PY'
     import sys, urllib.error, urllib.request
@@ -76,7 +80,7 @@ detect:
     [ "$rc" -eq 0 ] && { echo "$n"; exit 0; }
     [ "$rc" -eq 3 ] && { echo 0; exit 0; }
     exit 1
-  produces: integer          # dead-archive URLs in apt's sources; 0 when there is nothing to fix
+  produces: integer          # dead-archive URLs on apt's active lines; 0 when there is nothing to fix
 expect:
   predicate: equals
   value: 0
@@ -99,4 +103,4 @@ fix:
     done
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files). Healed twice on Ubuntu 22.10 (kinetic) on 2026-10-07, with the reverse command run by hand in between (tests/eos-proof/, evidence/ubuntu-22.10-2026-10-07.jsonl). Still owed: 24.10 must heal; 20.04 and 25.04 must report healthy."
+source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files). Healed twice on Ubuntu 22.10 (kinetic) on 2026-10-07, with the reverse command run by hand in between (tests/eos-proof/, evidence/ubuntu-22.10-2026-10-07.jsonl). The detect changed again that day to skip commented-out lines; that version has not run on a VM. Still owed: 22.10 again (expect 10, not 20); 24.10 must heal; 20.04 and 25.04 must report healthy."

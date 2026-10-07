@@ -6,6 +6,10 @@ checks, the hand undo and `apt-get update` write no record, so
 `evidence/README.md` writes them up. The entry stays in `candidates/`: it
 still has to heal on 24.10 and stay HEALTHY on 20.04 and 25.04.
 
+**The detect changed after that run.** It counted commented-out lines too,
+and now it doesn't. So 22.10 runs once more, from the `clean-baseline`
+snapshot: the steps are the same, and the count should be 10, not 20.
+
 Nothing here is induced. The VM is broken the way the lab machines were: it
 was installed with the network cable unplugged, so apt still points at
 archive.ubuntu.com, which no longer serves this release. Run from
@@ -41,6 +45,15 @@ python3 -c 'import yaml; print(yaml.safe_load(open("candidates/eos-release-dead-
 cat /tmp/eos-undo.sh; sudo sh /tmp/eos-undo.sh
 sha256sum /etc/apt/sources.list   # equals the hash from step 2
 
+# 4b. Active lines fixed by hand, comments left old: must read HEALTHY
+#     (one-line sources.list only; added after the 2026-10-07 run)
+sudo cp /etc/apt/sources.list /tmp/sources.list.orig
+sudo sed -i -E -e '/^deb /s#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu#http://old-releases.ubuntu.com/ubuntu#' -e '/^deb /s#https?://security\.ubuntu\.com/ubuntu#http://old-releases.ubuntu.com/ubuntu#' /etc/apt/sources.list
+grep -c '^# deb-src http://archive' /etc/apt/sources.list   # 10: the comments still say archive
+python3 engine/runner.py --playbooks candidates   # eos-release-dead-repos: HEALTHY, measured=0
+sudo cp /tmp/sources.list.orig /etc/apt/sources.list
+sha256sum /etc/apt/sources.list   # back to the hash from step 2
+
 # 5. Second fix: the undo really put the problem back
 python3 engine/runner.py --playbooks candidates   # PROBLEM again
 time sudo python3 engine/runner.py --playbooks candidates --fix eos-release-dead-repos
@@ -54,10 +67,11 @@ sudo apt-get update               # clean
 
 Four things to know when reading the output:
 
-- **The count includes commented-out lines.** On the 22.10 server install the
-  detect found 20, not 10. Each of the 10 `deb` lines has a `# deb-src` twin
-  under it with the same old address, and the detect counts those too. The
-  fix rewrites them as well, so the count still drops to 0.
+- **The count is active lines only.** The 22.10 server install has 10 `deb`
+  lines, each with a `# deb-src` twin carrying the same old address. The
+  detect skips the twins and counts 10. The fix rewrites them anyway, so a
+  twin uncommented later is right too. (The 2026-10-07 run predates this and
+  counted 20.)
 - **Verify checks the file, not apt.** It proves the addresses were
   rewritten. Only `apt-get update` proves apt works again, and that writes to
   `/var/lib/apt/lists`, so it can't be part of a read-only check. Run it by

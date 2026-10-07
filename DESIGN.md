@@ -281,7 +281,8 @@ proactive sweep) live in the MVP.
   On 2026-10-06 the reworked `failed-systemd-units` proved itself too, with
   the first real `verify.settle_seconds` wait, and returned to the library.
   On 2026-10-07 `eos-release-dead-repos` healed on 22.10, the lab's own
-  release. Remaining: finish proving it (24.10 must heal; 20.04 and 25.04
+  release; its detect then changed to skip comments (§16). Remaining: finish
+  proving it (22.10 again with that change; 24.10 must heal; 20.04 and 25.04
   must stay healthy), and grow the library of Ubuntu playbooks from problems
   we've really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
@@ -651,9 +652,20 @@ testing, so it became `docs/sf3000-tracker.xlsx` and changes in the same commits
 as the playbooks it describes. Its Verified columns still take values only from
 a real VM run.
 
+**2026-10-07 — A detect counts only what apt reads.** On the 22.10 VM,
+`eos-release-dead-repos` counted 20 old addresses where apt uses 10: each
+`deb` line has a commented-out `deb-src` twin, and the detect counted both.
+The fix rewrites both, so it healed. But on a machine whose active lines were
+already fixed by hand, the comments alone would have read as a problem. The
+detect now ignores everything after `#`, as apt does. A detect that measures
+more than the system acts on can call a healthy machine broken. The changed
+detect has to run on 22.10 again before its result there counts.
+
 ---
 
-*Last updated: revision 13 — recorded Session 3 (2026-10-07):
+*Last updated: revision 14 — `eos-release-dead-repos`' detect now counts
+only active lines, not comments (2026-10-07); §12 and §16 updated.
+Revision 13 — recorded Session 3 (2026-10-07):
 `eos-release-dead-repos` healed twice on 22.10, the first engine runs on a
 release other than 26.04; it stays a candidate until 24.10, 20.04 and 25.04
 have run; §12 and §13 updated.
