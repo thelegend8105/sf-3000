@@ -40,7 +40,9 @@
 # hand, old addresses left only in comments read as a problem. The detect now
 # drops everything from `#` to the end of each line before counting, the way
 # apt reads a one-line sources.list. The fix still rewrites comments too, so a
-# `deb-src` line uncommented later points at old-releases as well.
+# `deb-src` line uncommented later points at old-releases as well. Re-run on
+# the 22.10 VM the same day: it counted 10, and with only the comments left
+# on the old address it read HEALTHY.
 id: eos-release-dead-repos
 description: This Ubuntu release is end-of-support, its packages have moved to old-releases, and apt still points at the old address
 symptoms:
@@ -103,4 +105,4 @@ fix:
     done
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files). Healed twice on Ubuntu 22.10 (kinetic) on 2026-10-07, with the reverse command run by hand in between (tests/eos-proof/, evidence/ubuntu-22.10-2026-10-07.jsonl). The detect changed again that day to skip commented-out lines; that version has not run on a VM. Still owed: 22.10 again (expect 10, not 20); 24.10 must heal; 20.04 and 25.04 must report healthy."
+source: "CANDIDATE - NOT VETTED. Sketch from the tracker (Ubuntu sheet, eos-release-dead-repos). Detect reworked 2026-10-02 (server check; no longer reads backup files). Changed 2026-10-07 to skip commented-out lines. This detect healed twice on Ubuntu 22.10 (kinetic) on 2026-10-07, with the reverse command run by hand in between, and read healthy when only comments held old addresses (tests/eos-proof/, evidence/ubuntu-22.10-2026-10-07-2.jsonl). The previous detect healed twice there too (evidence/ubuntu-22.10-2026-10-07.jsonl). Still owed: 24.10 must heal; 20.04 and 25.04 must report healthy."

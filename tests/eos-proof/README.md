@@ -1,14 +1,17 @@
 # eos-proof — VM run for `eos-release-dead-repos`
 
-**Ran green on 2026-10-07** on Ubuntu 22.10 (kinetic), commit `4410bee`, on
-`KineticServer`. Records: `evidence/ubuntu-22.10-2026-10-07.jsonl`. The hash
-checks, the hand undo and `apt-get update` write no record, so
-`evidence/README.md` writes them up. The entry stays in `candidates/`: it
-still has to heal on 24.10 and stay HEALTHY on 20.04 and 25.04.
+**Ran green twice on 2026-10-07** on Ubuntu 22.10 (kinetic), on
+`KineticServer`:
 
-**The detect changed after that run.** It counted commented-out lines too,
-and now it doesn't. So 22.10 runs once more, from the `clean-baseline`
-snapshot: the steps are the same, and the count should be 10, not 20.
+- **Commit `4410bee`**, the first detect. It counted commented-out lines too,
+  so it found 20. Records: `evidence/ubuntu-22.10-2026-10-07.jsonl`.
+- **Commit `0be2d76`**, the current detect, which skips comments. It found 10,
+  and step 4b (added for this run) read HEALTHY. Records:
+  `evidence/ubuntu-22.10-2026-10-07-2.jsonl`.
+
+The hash checks, the hand undo, step 4b and `apt-get update` write no record,
+so `evidence/README.md` writes them up. The entry stays in `candidates/`: it
+still has to heal on 24.10 and stay HEALTHY on 20.04 and 25.04.
 
 Nothing here is induced. The VM is broken the way the lab machines were: it
 was installed with the network cable unplugged, so apt still points at
@@ -46,7 +49,7 @@ cat /tmp/eos-undo.sh; sudo sh /tmp/eos-undo.sh
 sha256sum /etc/apt/sources.list   # equals the hash from step 2
 
 # 4b. Active lines fixed by hand, comments left old: must read HEALTHY
-#     (one-line sources.list only; added after the 2026-10-07 run)
+#     (one-line sources.list only; added for the second 22.10 run)
 sudo cp /etc/apt/sources.list /tmp/sources.list.orig
 sudo sed -i -E -e '/^deb /s#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu#http://old-releases.ubuntu.com/ubuntu#' -e '/^deb /s#https?://security\.ubuntu\.com/ubuntu#http://old-releases.ubuntu.com/ubuntu#' /etc/apt/sources.list
 grep -c '^# deb-src http://archive' /etc/apt/sources.list   # 10: the comments still say archive
@@ -70,7 +73,7 @@ Four things to know when reading the output:
 - **The count is active lines only.** The 22.10 server install has 10 `deb`
   lines, each with a `# deb-src` twin carrying the same old address. The
   detect skips the twins and counts 10. The fix rewrites them anyway, so a
-  twin uncommented later is right too. (The 2026-10-07 run predates this and
+  twin uncommented later is right too. (The first 22.10 run predates this and
   counted 20.)
 - **Verify checks the file, not apt.** It proves the addresses were
   rewritten. Only `apt-get update` proves apt works again, and that writes to

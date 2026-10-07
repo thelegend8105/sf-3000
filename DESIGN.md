@@ -281,10 +281,10 @@ proactive sweep) live in the MVP.
   On 2026-10-06 the reworked `failed-systemd-units` proved itself too, with
   the first real `verify.settle_seconds` wait, and returned to the library.
   On 2026-10-07 `eos-release-dead-repos` healed on 22.10, the lab's own
-  release; its detect then changed to skip comments (§16). Remaining: finish
-  proving it (22.10 again with that change; 24.10 must heal; 20.04 and 25.04
-  must stay healthy), and grow the library of Ubuntu playbooks from problems
-  we've really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
+  release; its detect then changed to skip comments (§16) and healed there
+  again. Remaining: finish proving it (24.10 must heal; 20.04 and 25.04 must
+  stay healthy), and grow the library of Ubuntu playbooks from problems we've
+  really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
 - **Phase 2 — Front door.** A simple CLI/TUI, with deterministic
   keyword/symptom matching for the complaint-driven mode (no AI). Alongside:
   map out commands + use cases and review competitor apps to keep growing the
@@ -348,8 +348,9 @@ crashed ten seconds after its restart was caught only because the check waited
 exit 3 before running the check. The gate refuses rather than snapshots: there
 is nothing to take a snapshot with until the snapshot layer is built. On
 2026-10-07 the engine ran on a second release for the first time: on 22.10,
-the candidate `eos-release-dead-repos` healed twice, with its undo run by hand
-in between.
+the candidate `eos-release-dead-repos` healed four times, twice before its
+detect changed (§16) and twice after, with its undo run by hand between each
+pair.
 
 The evidence is the engine's `logs/runs.jsonl`. That file is gitignored, so it
 exists only on the machine that ran it — which is why its absence on a dev box
@@ -659,11 +660,15 @@ The fix rewrites both, so it healed. But on a machine whose active lines were
 already fixed by hand, the comments alone would have read as a problem. The
 detect now ignores everything after `#`, as apt does. A detect that measures
 more than the system acts on can call a healthy machine broken. The changed
-detect has to run on 22.10 again before its result there counts.
+detect ran on 22.10 the same day: it counted 10, and with only the comments
+left on the old address it read healthy.
 
 ---
 
-*Last updated: revision 14 — `eos-release-dead-repos`' detect now counts
+*Last updated: revision 15 — the comment-skipping detect re-ran on 22.10
+(2026-10-07): healed twice, and read healthy with only comments left old;
+§12, §13 and §16 updated.
+Revision 14 — `eos-release-dead-repos`' detect now counts
 only active lines, not comments (2026-10-07); §12 and §16 updated.
 Revision 13 — recorded Session 3 (2026-10-07):
 `eos-release-dead-repos` healed twice on 22.10, the first engine runs on a

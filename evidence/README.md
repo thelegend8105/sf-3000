@@ -8,6 +8,7 @@ is the only lasting record of what the engine actually did on a machine.
 
 - Copy the file as it is. Never edit a record, even to fix a typo.
 - One file per copy, named `<distro>-<release>-<date of the last run>.jsonl`.
+  If that name is taken, add `-2`, `-3` and so on.
 - The tracker's Run log sheet points at these files, one row per record.
 
 Copy it off the VM like this (on Windows, from the repo):
@@ -144,3 +145,43 @@ the person who ran it:
 
 The VM was not reverted afterwards. It was powered off and saved as the
 snapshot `repos-fixed`, the starting point for the hand-run upgrade demo.
+
+### `ubuntu-22.10-2026-10-07-2.jsonl`
+
+The 22.10 re-run, with the detect that skips commented-out lines (commit
+`0be2d76`), following `tests/eos-proof/`. 2 runs on `KineticServer`,
+2026-10-07 12:13 and 12:16 IST, on a fresh clone after restoring
+`clean-baseline` at 12:09 IST (the time the host made the new disk image).
+Copied off at 12:17 IST. The name ends in `-2` because the morning's file
+already has this date.
+
+- Line 1: `healed`. The detect found 10, the active lines only, and then 0.
+- Line 2: `healed` again, after the undo was run by hand. 10, then 0.
+
+Both records' `fix_command` matches the playbook's fix text exactly. The old
+detect would have counted 20 on this file, so 10 also shows that the VM ran
+the new one.
+
+**Step 4b writes no record**, because a sweep only prints. Between the two
+runs, the active lines were rewritten by hand and the comments were left on
+the old address. The detect must then read HEALTHY, and it did. Transcribed
+from a screenshot by the person who ran it (12:23 IST):
+
+```
+rht@kineticvm:~/sf-3000$ grep -c '^# deb-src http://archive' /etc/apt/sources.list   # 10: the comments still say archive
+10
+rht@kineticvm:~/sf-3000$ python3 engine/runner.py --playbooks candidates
+Loaded 3 valid playbook(s).
+
+Running checks on linux/ubuntu:
+------------------------------------------------------------
+✓ [HEALTHY] display-gpu-driver     measured=0
+✓ [HEALTHY] eos-release-dead-repos measured=0
+✓ [HEALTHY] wifi-down              measured=0
+------------------------------------------------------------
+0 problem(s) found. (No fixes were executed.)
+```
+
+The remaining checks in the steps were run as written: the hashes, and
+`apt-get update` after each fix. The person who ran them reported no
+mismatch.
