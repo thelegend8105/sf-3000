@@ -247,10 +247,18 @@ distro.
   (a release upgrade) is a procedure: ordered steps, each with its own check,
   time limit and verify. The person confirms once; a system service runs a
   root-owned copy of the engine at each boot until the last step verifies or
-  the procedure stops, then removes itself. A step cut off by a crash is never
-  re-run by itself. A procedure that cannot be undone starts only with a
-  snapshot: the engine's own (Timeshift), which it restores by itself when a
-  step fails, or one the person names (see §16).
+  the procedure stops, then removes itself. A procedure that cannot be undone
+  starts only with a snapshot: the engine's own (Timeshift), which it
+  restores by itself when a step fails, or one the person names (see §16).
+  - Before it asks, the engine checks that apt can update from every source.
+  - It installs only what it needs to work (Timeshift, pyyaml, jsonschema),
+    only with apt, and only after a y.
+  - Its snapshot leaves out `/boot/efi`, which on a dual-boot machine holds
+    Windows' boot files too.
+  - A step cut off by a crash or a power-off is never re-run by itself.
+    Nor is it restored at a boot nobody may be watching: the engine waits
+    for the person, who chooses between restoring and leaving the machine
+    as it is.
 
 ---
 
@@ -291,9 +299,13 @@ proactive sweep) live in the MVP.
   On 2026-10-07 `eos-release-dead-repos` healed on 22.10, the lab's own
   release; its detect then changed to skip comments (§16) and healed there
   again. The same day, procedures and the engine's own snapshots were built
-  for the lab's real goal, an in-place upgrade from 22.10 to 26.04; they pass
-  offline and have not yet run on a VM. Remaining: prove procedures on the VM
-  (`tests/procedure-proof/`, then the upgrade itself), finish proving
+  for the lab's real goal, an in-place upgrade from 22.10 to 26.04. On
+  2026-10-08 the upgrade became four procedures, one per supervised visit.
+  The engine also gained an apt check before anything runs, installs
+  Timeshift itself, leaves the shared EFI partition out of its snapshots, and
+  waits for a person after a cut-off. All of it passes offline; none has run
+  on a VM yet. Remaining: prove procedures on the VM (`tests/procedure-proof/`,
+  then the four upgrades), then on an EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
@@ -324,13 +336,16 @@ proactive sweep) live in the MVP.
   missing-tool, boot-partition-full, failed-services); `candidates/` holds
   proposed entries that run only when named.
 - `schema/procedure.schema.json` — the rulebook for procedures.
-- `candidates/procedures/` — `release-upgrade-to-26.04`, never run.
+- `candidates/procedures/` — the 22.10 → 26.04 upgrade as four procedures,
+  one upgrade each (`release-upgrade-to-23.04`, `-23.10`, `-24.04`,
+  `-26.04`), never run.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
   With `--run <id>` it starts a procedure (`--take-snapshot` or
-  `--snapshot <name>` when it cannot be undone); `--status` and `--cancel`
-  follow it.
+  `--snapshot <name>` when it cannot be undone), after checking apt and
+  installing Timeshift if it is missing; `--status` and `--cancel` follow it.
+  Under sudo it offers to install its own Python packages with apt.
 - `tests/rollback-proof/` — a fixture whose only job is to make the rollback
   path actually execute, on real apt. Repeatable since 2026-10-02.
 - `tests/branch-proof/` — VM fixtures for the snapshot gate, `declined`,
@@ -340,9 +355,9 @@ proactive sweep) live in the MVP.
 - `tests/eos-proof/` — the steps for the `eos-release-dead-repos` VM runs.
   Nothing is induced: an end-of-life release installed offline is already
   broken the way the lab's machines were.
-- `tests/procedure-proof/` — a VM fixture for procedures (a reboot, a time
-  limit, a snapshot and its restore) and an offline proof of every procedure
-  branch.
+- `tests/procedure-proof/` — VM fixtures for procedures (a reboot, a time
+  limit, a snapshot and its restore, a step cut off by a power-off) and an
+  offline proof of every procedure branch.
 - `tests/blocked-proof/`, `tests/lifecycle-proof/` — offline proofs of every
   lifecycle branch.
 - `docs/sf3000-tracker.xlsx` — the backlog, its status, the VM run log and the
@@ -738,9 +753,90 @@ start the upgrade again, fail again and restore again, forever. The engine adds
 its state directory, its log directory, and its service file and enable link to
 Timeshift's exclude list, and changes nothing else in Timeshift's config.
 
+**2026-10-08 — The lab's upgrade is four procedures, one per supervised
+visit.** The person who runs the lab works in slots of 2 to 2.5 hours, after
+which the lab assistant switches the machines off, and wants the engine to
+run only while they watch. The four-step procedure carried straight on to the
+next upgrade after each reboot: past the slot, and without them. It is now
+four procedures of one step each, `release-upgrade-to-23.04` to
+`release-upgrade-to-26.04`. Each visit's command names the upgrade it runs,
+and each takes its own snapshot, so a restore goes back one release, not all
+the way to 22.10. When `--run` names an upgrade that does not apply yet, the
+engine names the one that does. Multi-step procedures still work.
+
+*Why four procedures rather than a "stop after one step" option:* no new
+engine logic, and the command says what it will do.
+
+**2026-10-08 — A step cut off mid-run waits for a person.** This replaces the
+cut-off case of the automatic restore above. A boot that finds a step still
+marked running no longer restores at once. That boot may be the next person
+to switch the machine on. A restore is a long copy that ends in a forced
+reboot, and a restore cut off in turn can leave a machine that does not
+start. So the boot notes the cut-off (phase `cut_off`), removes the service
+and does nothing else.
+
+The next `--run`, under sudo, offers the restore with a y/N. The restore then
+runs under the service, so closing the terminal cannot stop it. `--cancel`
+instead leaves the machine as it is and records the step as `interrupted`.
+Failures during a run are still restored at once, because the person is
+there: a step that fails, times out, or fails its check after the reboot.
+
+**2026-10-08 — The snapshot leaves out `/boot/efi`.** The lab's machines
+dual-boot Windows. Their `/boot/efi` is the Windows disk's EFI partition, so
+it holds Windows' boot files too, and the person who runs the lab says
+Windows must not be touched. Timeshift adds no mount under `/boot` to its
+excludes, so it copies `/boot/efi` into its snapshots, and its restore would
+write the partition back.
+
+Its restore leaves alone whatever the snapshot excluded: it runs rsync
+without `--delete-excluded` (read in Timeshift 22.06.5). So the engine adds
+`/boot/efi/***` to its excludes. After a restore, Timeshift reinstalls GRUB,
+which writes only Ubuntu's own folder on that partition, as every GRUB update
+does. This has not yet run on an EFI machine.
+
+**2026-10-08 — apt is checked before anything runs.** One of the lab's
+machines lists a third-party repository with no 22.10, and a mirror that
+does not exist. `apt-get update` fails there, and an upgrade starts with
+`apt-get update`, so it would fail after the snapshot and turn into a
+restore. The engine now runs `apt-get update` before the y/N, and refuses
+with exit 9, naming the failing sources.
+
+`apt-get update` exits 0 when a source cannot be reached, so the engine reads
+its messages, not only its exit code. Warnings that are not failures, such as
+a source listed twice, do not count.
+
+*Why this does not break §10's read-only rule:* that rule is for detects.
+This check is part of `--run`, under sudo, and it writes only apt's lists.
+
+**2026-10-08 — The engine installs what it needs, with apt, after a y.** The
+person who runs the lab wants as little technical work by hand as possible.
+`--take-snapshot` now installs Timeshift when it is missing. The plan says
+so, and the install comes after the y and before anything else, in the
+foreground. It is recorded as `installed` or `install_failed`. Under sudo, the
+engine also offers to install python3-yaml and python3-jsonschema when it
+cannot import them.
+
+*Why apt and never pip:* the service runs `/usr/bin/python3` after each
+upgrade. A release upgrade moves that to a newer Python, which does not see
+modules pip installed for the old one.
+
+**2026-10-08 — A step's output is read one attempt at a time.** The engine
+reads the end of a step's output to tell "the package manager was busy" from
+"it failed". That output came from a log file that keeps every attempt. So a
+lock message left by the attempt before could make a real failure read as
+busy, and a step that had changed something would have been left without a
+restore. It now reads only the current attempt. Found while building the apt
+check, and covered offline.
+
 ---
 
-*Last updated: revision 16 — procedures, the engine's own Timeshift
+*Last updated: revision 17 — the lab's upgrade split into four procedures,
+one per supervised visit; apt checked before anything runs; Timeshift and the
+engine's Python packages installed with apt after a y; `/boot/efi` left out
+of snapshots; a cut-off step waits for a person; a step's output read one
+attempt at a time (2026-10-08). Built and passing offline on Python 3.12 and
+3.10, not yet run on a VM; §10, §12, §13 and §16 updated.
+Revision 16 — procedures, the engine's own Timeshift
 snapshots and automatic restore (2026-10-07), built and passing offline, not
 yet run on a VM; §10, §12, §13, §15 and §16 updated.
 Revision 15 — the comment-skipping detect re-ran on 22.10

@@ -1,19 +1,21 @@
-# CANDIDATE - not yet vetted. Visit 4 of the lab's upgrade: Ubuntu 24.04 LTS
-# to 26.04 LTS, in place. One procedure per upgrade, one upgrade per visit,
-# each run with the person there; README.md here has the order and why each
-# part is the way it is.
+# CANDIDATE - not yet vetted. Visit 2 of the lab's upgrade: Ubuntu 23.04 to
+# 23.10, in place. One procedure per upgrade, one upgrade per visit, each run
+# with the person there; README.md here has the order and why each part is
+# the way it is.
 #
 #   sudo python3 engine/runner.py --procedures candidates/procedures \
-#        --run release-upgrade-to-26.04 --take-snapshot
+#        --run release-upgrade-to-23.10 --take-snapshot
 #
-# From 24.04 the next supported release is 26.04 (LTS to LTS), so this is an
-# ordinary do-release-upgrade. Until 2026-10-08 this id named all four
-# upgrades in one procedure; now it is only the last.
-id: release-upgrade-to-26.04
-description: Upgrade an Ubuntu 24.04 LTS machine in place to 26.04 LTS, the next release (visit 4 of 4)
+# 23.10 is past end of life, so do-release-upgrade will not offer it: the
+# upgrader is fetched from old-releases by hand and its signature checked
+# against Ubuntu's archive keyring (README.md, "Why 23.04 and 23.10 fetch
+# their upgrader by hand").
+id: release-upgrade-to-23.10
+description: Upgrade an end-of-life Ubuntu 23.04 machine in place to 23.10, the next release (visit 2 of 4)
 symptoms:
   - "my Ubuntu is too old"
   - "upgrade to the latest Ubuntu"
+  - "this Ubuntu release is no longer supported"
 applies_to:
   os: linux
   distros: [ubuntu]
@@ -22,15 +24,15 @@ requires_privilege: true
 reverse:
   strategy: snapshot_only   # the way back is a snapshot: --take-snapshot, or one you name
 steps:
-  - id: to-26.04
-    description: 24.04 LTS to 26.04 LTS (do-release-upgrade)
+  - id: to-23.10
+    description: 23.04 to 23.10 (end of life; its upgrader comes from old-releases)
     requires:
       detect:
         command: '. /etc/os-release && echo "$VERSION_CODENAME"'
         produces: string
       expect:
         predicate: equals
-        value: noble
+        value: lunar
     detect:
       command: |-
         . /etc/os-release
@@ -38,14 +40,22 @@ steps:
       produces: integer
     expect:
       predicate: greater_than
-      value: 2603
+      value: 2309
     run:
       ubuntu: |-
         set -e
         export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
         apt-get update
         apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
-        do-release-upgrade -f DistUpgradeViewNonInteractive
+        dir=$(mktemp -d)
+        cd "$dir"
+        url=http://old-releases.ubuntu.com/ubuntu/dists/mantic-updates/main/dist-upgrader-all/current
+        for f in mantic.tar.gz mantic.tar.gz.gpg; do
+          python3 -I -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$url/$f" "$f"
+        done
+        gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg mantic.tar.gz.gpg mantic.tar.gz
+        tar -xzf mantic.tar.gz
+        ./mantic --mode=server --frontend=DistUpgradeViewNonInteractive
     timeout_minutes: 360
     reboot_after: true
 source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Never run. Planned: tests/procedure-proof/ on the 22.10 VM first, then the four in order from its repos-fixed snapshot with --take-snapshot."

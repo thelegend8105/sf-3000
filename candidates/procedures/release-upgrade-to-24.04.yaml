@@ -1,19 +1,22 @@
-# CANDIDATE - not yet vetted. Visit 4 of the lab's upgrade: Ubuntu 24.04 LTS
-# to 26.04 LTS, in place. One procedure per upgrade, one upgrade per visit,
-# each run with the person there; README.md here has the order and why each
-# part is the way it is.
+# CANDIDATE - not yet vetted. Visit 3 of the lab's upgrade: Ubuntu 23.10 to
+# 24.04 LTS, in place. One procedure per upgrade, one upgrade per visit, each
+# run with the person there; README.md here has the order and why each part
+# is the way it is.
 #
 #   sudo python3 engine/runner.py --procedures candidates/procedures \
-#        --run release-upgrade-to-26.04 --take-snapshot
+#        --run release-upgrade-to-24.04 --take-snapshot
 #
-# From 24.04 the next supported release is 26.04 (LTS to LTS), so this is an
-# ordinary do-release-upgrade. Until 2026-10-08 this id named all four
-# upgrades in one procedure; now it is only the last.
-id: release-upgrade-to-26.04
-description: Upgrade an Ubuntu 24.04 LTS machine in place to 26.04 LTS, the next release (visit 4 of 4)
+# From 23.10 the next supported release is 24.04, so this is an ordinary
+# do-release-upgrade. Its upgrader replaces old-releases addresses with the
+# main archive, so apt should move back there by itself (read in the source,
+# not yet seen on a machine). 24.04 is supported until 2029: a good place to
+# pause.
+id: release-upgrade-to-24.04
+description: Upgrade an end-of-life Ubuntu 23.10 machine in place to 24.04 LTS, the next release (visit 3 of 4)
 symptoms:
   - "my Ubuntu is too old"
   - "upgrade to the latest Ubuntu"
+  - "this Ubuntu release is no longer supported"
 applies_to:
   os: linux
   distros: [ubuntu]
@@ -22,15 +25,15 @@ requires_privilege: true
 reverse:
   strategy: snapshot_only   # the way back is a snapshot: --take-snapshot, or one you name
 steps:
-  - id: to-26.04
-    description: 24.04 LTS to 26.04 LTS (do-release-upgrade)
+  - id: to-24.04
+    description: 23.10 to 24.04 LTS (do-release-upgrade; apt moves back to the main archive)
     requires:
       detect:
         command: '. /etc/os-release && echo "$VERSION_CODENAME"'
         produces: string
       expect:
         predicate: equals
-        value: noble
+        value: mantic
     detect:
       command: |-
         . /etc/os-release
@@ -38,7 +41,7 @@ steps:
       produces: integer
     expect:
       predicate: greater_than
-      value: 2603
+      value: 2403
     run:
       ubuntu: |-
         set -e

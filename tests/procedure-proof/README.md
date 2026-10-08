@@ -1,31 +1,44 @@
-# procedure-proof — VM run for the procedure machinery
+# procedure-proof — VM runs for the procedure machinery
 
 **Not yet run on a VM.** `test_procedure.py` passes offline (stubbed machine,
-no VM). These steps prove the same machinery on a real one, with a fixture
-that takes minutes, before any real upgrade relies on it.
+no VM; on Python 3.12 and 3.10). These runs prove the same machinery on a
+real one, with fixtures that take minutes, before any real upgrade relies on
+it.
 
-`procedure-proof.yaml` has three steps that touch marker files in
-`/var/lib/sf3000-proof/`:
+Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
+
+`procedure-proof.yaml` has three steps:
 
 - **one** touches a marker, then the engine reboots and verifies after the boot.
 - **two** touches a marker and is verified at once.
 - **three** sleeps 5 minutes against a 1-minute limit. The engine must stop
   it, so marker `three` must never appear.
 
-Two runs. Run A has no snapshot, so step three's failure stops the procedure.
-Run B uses `--take-snapshot`, so the engine restores its Timeshift snapshot and
-the markers vanish.
+`cut-off-proof.yaml` has one step, **long**. It touches `started`, runs for
+10 minutes, then touches `finished`. That leaves time to power the VM off in
+the middle of it.
 
-Use the 22.10 VM from its `repos-fixed` snapshot: Run B installs Timeshift,
-which needs a working apt.
+Four runs:
+
+| Run | what it proves |
+|-----|----------------|
+| A | No snapshot: step three's failure stops the procedure. |
+| B | `--take-snapshot`: the engine installs Timeshift itself, then restores its snapshot when step three fails. |
+| C | A step cut off by a power-off: the boot after restores **nothing** and waits. Running the same command again offers the restore. |
+| D | A dead apt source: the engine refuses before asking anything. |
+
+Use the 22.10 VM from its `repos-fixed` snapshot. Timeshift must not be
+installed yet, because Run B installs it, and that needs a working apt.
 
 ```bash
 # 0. Setup (on Windows): restore repos-fixed, start the VM, ssh -p 2223 rht@127.0.0.1
 cd ~/sf-3000 && git pull && git log --oneline -1
-python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed (on Python 3.10 too)
+python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed
+which timeshift || echo "no timeshift: good"
 
 # --- Run A: no snapshot --------------------------------------------------
 sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure-proof
+# First "checking that apt can update from every source", then a tick.
 # The box lists 3 steps, 1 reboot. Answer y. It prints "started" and returns.
 journalctl -fu sf3000-procedure      # watch step one run; the VM then reboots
 
@@ -38,49 +51,100 @@ ls /var/lib/sf3000-proof/            # one two
 systemctl status sf3000-procedure    # "could not be found": the service removed itself
 sleep 300; ls /var/lib/sf3000-proof/ # still only one two: the sleep really was killed
 
-# --- Run B: --take-snapshot ----------------------------------------------
-sudo apt-get install -y timeshift
+# --- Run B: --take-snapshot, Timeshift installed by the engine -------------
 sudo rm -rf /var/lib/sf3000-proof
 sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure-proof --take-snapshot
-# The box now says the engine takes a Timeshift snapshot first. Answer y.
+# The box has an "install   : timeshift" line, and the snapshot line says
+# "(not /home, not /boot/efi)". Answer y: "installing timeshift with apt"
+# (apt's output goes to /var/log/sf3000/install.log, not the screen), then
+# "installed timeshift", then "started".
 journalctl -fu sf3000-procedure      # "taking a Timeshift snapshot" (minutes), then one, then a reboot
 
 # The VM reboots TWICE: once after step one; then, after three fails,
 # Timeshift restores and reboots by itself. After the second, ssh back in:
 python3 engine/runner.py --status    # stopped: ... Restored Timeshift snapshot <name>
 ls /var/lib/sf3000-proof             # "No such file or directory": restored away
+which timeshift                      # still there: installed before the snapshot
 sudo timeshift --list                # the snapshot, comment "sf3000 procedure-proof ..."
-cat /var/log/sf3000/runs.jsonl       # Run A's 3 records, then Run B's 3
+sudo python3 -c 'import json; print(*json.load(open("/etc/timeshift/timeshift.json"))["exclude"], sep="\n")'
+#   the engine's five, ending "/boot/efi/***". Timeshift may list its own
+#   after them, such as /home/rht/**: a first snapshot rewrites this file.
+
+# --- Run C: cut off by a power-off ------------------------------------------
+sudo python3 engine/runner.py --procedures tests/procedure-proof --run cut-off-proof --take-snapshot
+# Answer y. Then wait for step long to start (after the snapshot, minutes):
+journalctl -fu sf3000-procedure      # until "long: ... running"
+ls /var/lib/sf3000-proof             # started
+# Now, on Windows, power the VM off (not a shutdown):
+#   E:\VirtualBox\VBoxManage.exe controlvm KineticServer poweroff
+# Start it again, ssh back in:
+python3 engine/runner.py --status    # phase cut_off; "nothing was undone: the engine waits for you"
+ls /var/lib/sf3000-proof             # started, and no finished: nothing was undone
+systemctl status sf3000-procedure    # "could not be found": the service removed itself
+journalctl -b -u sf3000-procedure --no-pager -o short-iso
+#   "step long was cut off ... Nothing was undone; the engine waits for a person"
+sudo python3 engine/runner.py --procedures tests/procedure-proof --run cut-off-proof --take-snapshot
+# It says step long was cut off and offers the restore. Answer n:
+#   "Nothing was done". Run the same command again and answer y:
+#   "restoring under the system service". The VM reboots by itself. ssh back in:
+python3 engine/runner.py --status    # stopped: step long: the machine went down ... Restored Timeshift snapshot <name>
+ls /var/lib/sf3000-proof             # "No such file or directory": restored away
+
+# --- Run D: a dead apt source -------------------------------------------
+printf 'deb http://sf3000-no-such-host.invalid/ubuntu kinetic main\ndeb http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite main\n' \
+  | sudo tee /etc/apt/sources.list.d/sf3000-dead.list
+sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure-proof --take-snapshot; echo "exit $?"
+# exit 9: "apt cannot update from every source, so nothing was started", and
+# both dead lines named (W: Failed to fetch ... and E: ... does not have a
+# Release file). No box, no y/N, nothing staged.
+python3 engine/runner.py --status    # still Run C's: nothing new was started
+sudo rm /etc/apt/sources.list.d/sf3000-dead.list
 
 # --- Save the evidence (on Windows, from the repo) --------------------------
 #   scp -P 2223 rht@127.0.0.1:/var/log/sf3000/runs.jsonl evidence/ubuntu-22.10-<YYYY-MM-DD>.jsonl
 #   (naming rules in evidence/README.md; add -2, -3 if the name is taken)
 ```
 
-Expected records in `/var/log/sf3000/runs.jsonl`, 6 lines:
+Expected records in `/var/log/sf3000/runs.jsonl`, 8 lines:
 
-| Run | step  | outcome       | what else to check                              |
-|-----|-------|---------------|-------------------------------------------------|
-| A   | one   | `healed`      | `rebooted: true`, `verify_after: 1`             |
-| A   | two   | `healed`      | `rebooted: false`                               |
-| A   | three | `fix_failed`  | `fix_exit_code: null` (stopped at the limit)    |
-| B   | one   | `healed`      | `snapshot_taken: true`, `snapshot_id` = the Timeshift name |
-| B   | two   | `healed`      |                                                 |
-| B   | three | `rolled_back` | `failure: fix_failed`, `rollback_method: timeshift`, `rollback_result: "ok: back to ..."` |
+| Run | step    | outcome       | what else to check                              |
+|-----|---------|---------------|-------------------------------------------------|
+| A   | one     | `healed`      | `rebooted: true`, `verify_after: 1`             |
+| A   | two     | `healed`      | `rebooted: false`                               |
+| A   | three   | `fix_failed`  | `fix_exit_code: null` (stopped at the limit)    |
+| B   | install | `installed`   | `fix_command` ends `apt-get -y install timeshift`, `fix_exit_code: 0` |
+| B   | one     | `healed`      | `snapshot_taken: true`, `snapshot_id` = the Timeshift name |
+| B   | two     | `healed`      |                                                 |
+| B   | three   | `rolled_back` | `failure: fix_failed`, `rollback_method: timeshift`, `rollback_result: "ok: back to ..."` |
+| C   | long    | `rolled_back` | `failure: interrupted`, `rollback_requested` set (the y), `rollback_result: "ok: back to ..."` |
+
+Run D writes no record. It changed nothing, like the other refusals.
 
 Things to know when reading the output:
 
 - **The procedure's records are not in `~/sf-3000/logs/`.** The service writes
   as root at boot, so it writes only to root-owned places:
   `/var/log/sf3000/runs.jsonl` for records, `/var/log/sf3000/<id>-<step>.log`
-  for each step's output, plus `snapshot.log` and `restore.log`.
-- **After Run B's restore, the journal forgets the run.** Timeshift rolls back
+  for each step's output, plus `snapshot.log`, `restore.log`, `apt-check.log`
+  and `install.log`.
+- **After a restore, the journal forgets the run.** Timeshift rolls back
   `/var/log/journal` with everything else. `/var/log/sf3000/` is excluded from
   the snapshot, so the engine's own records survive. That is on purpose: it is
-  how the boot after the restore knows what happened.
-- **The engine adds four excludes to `/etc/timeshift/timeshift.json`**: its
-  state, its logs, and its service file and enable link. Nothing else in that
-  file is changed.
+  how the boot after the restore knows what happened. Read the journal before
+  answering y in Run C.
+- **The engine adds five excludes to `/etc/timeshift/timeshift.json`.** They
+  are its state, its logs, its service file and enable link, and `/boot/efi`.
+  The engine changes nothing else in that file. Timeshift itself rewrites it
+  in its own layout when it estimates the size of a first snapshot. The VM boots with BIOS, so it has no
+  `/boot/efi`, and here that exclude only shows up in the file. The restore
+  leaving a shared EFI partition alone needs an EFI VM.
 - **Run A's step three reads `fix_failed`, not `interrupted`.** The time limit
   stopped it, and the engine was still running to record that. `interrupted`
-  is for a machine that went down mid-step; the offline test covers it.
+  is for a machine that went down mid-step: Run C.
+- **Not proven here:** the engine installing python3-jsonschema itself. A
+  server VM has it already, because cloud-init depends on it. The lab's
+  desktops do not, and neither will an EFI desktop VM.
+
+After these runs comes the upgrade itself: the four procedures in
+`candidates/procedures/`, one at a time, from `repos-fixed` with
+`--take-snapshot`. Their README has the order.

@@ -1,0 +1,32 @@
+# VM fixture for a cut-off step: one step that runs for 10 minutes, long
+# enough to power the VM off in the middle of it. It leaves marker `started`
+# at once and `finished` only at the end, in /var/lib/sf3000-proof/.
+#
+# Run with --take-snapshot, power the VM off mid-step, start it again. The
+# boot after must restore NOTHING: phase cut_off, `started` still there, the
+# service gone. Running the same --run again offers the restore; after a y
+# the service restores the snapshot, reboots, and the boot after checks the
+# machine is back (rolled_back, failure interrupted). See README.md, Run C.
+id: cut-off-proof
+description: Fixture - one 10-minute step, to be cut off by powering the machine off
+applies_to:
+  os: linux
+  distros: [ubuntu]
+risk: moderate
+requires_privilege: true
+reverse:
+  strategy: none
+steps:
+  - id: long
+    description: Leave marker started, run for 10 minutes, then leave marker finished
+    detect:
+      command: '[ -e /var/lib/sf3000-proof/finished ] && echo 1 || echo 0'
+      produces: integer
+    expect:
+      predicate: equals
+      value: 1
+    run:
+      default: mkdir -p /var/lib/sf3000-proof && touch /var/lib/sf3000-proof/started && sleep 600 && touch /var/lib/sf3000-proof/finished
+    timeout_minutes: 15
+    reboot_after: false
+source: "TEST FIXTURE - not a library entry. Exercises a step cut off by a power-off: the boot after must wait for a person instead of restoring, and the next --run must offer the restore."

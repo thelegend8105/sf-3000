@@ -12,7 +12,7 @@ schema/playbook.schema.json   the contract every playbook must satisfy
 schema/procedure.schema.json  the contract for procedures: ordered steps that survive reboots
 playbooks/*.yaml              four entries, each proven on a VM
 candidates/*.yaml             proposed entries, not yet proven — run only when named
-candidates/procedures/        proposed procedures (the 22.10 → 26.04 release upgrade)
+candidates/procedures/        proposed procedures: 22.10 → 26.04, one procedure per release upgrade
 engine/runner.py              the engine: validate, detect, diagnose, fix
 tests/rollback-proof/         a VM fixture that exercises the rollback path on real apt
 tests/branch-proof/           VM fixtures for the snapshot gate, declined, rollback_failed, verify_error
@@ -62,7 +62,8 @@ the machine is touched.
 ## Run it
 
 ```bash
-pip install pyyaml jsonschema --break-system-packages
+sudo apt-get install python3-yaml python3-jsonschema   # Ubuntu; under sudo the engine offers this itself
+pip install pyyaml jsonschema                          # elsewhere, such as a dev box
 
 python3 engine/runner.py                    # detect + diagnose everything
 python3 engine/runner.py --validate-only    # check the library, run nothing
@@ -74,27 +75,40 @@ python3 tests/lifecycle-proof/test_outcomes.py    #   no VM needed, run anywhere
 python3 tests/procedure-proof/test_procedure.py
 ```
 
-Some work is too long for one fix: a release upgrade is four upgrades and a
-reboot after each. A **procedure** is an ordered list of steps, each with its
-own check, command, time limit and verify. You confirm once; the engine then
-hands the work to a system service, which carries on after every reboot and
-removes itself when the procedure finishes or stops. Its records go to
-`/var/log/sf3000/runs.jsonl`.
+Some work is too long for one fix. A release upgrade takes an hour or more
+and ends in a reboot. A **procedure** is an ordered list of steps, each with
+its own check, command, time limit and verify. You confirm once; the engine
+then hands the work to a system service, which carries on after every
+reboot and removes itself when the procedure finishes or stops. Its records
+go to `/var/log/sf3000/runs.jsonl`.
+
+The lab's move from 22.10 to 26.04 is four procedures, one upgrade each, run
+one per visit with someone at the machine
+([candidates/procedures/README.md](candidates/procedures/README.md)):
 
 ```bash
 sudo python3 engine/runner.py --procedures candidates/procedures \
-     --run release-upgrade-to-26.04 --take-snapshot  # asks first
-python3 engine/runner.py --status                    # where it is
+     --run release-upgrade-to-23.04 --take-snapshot  # visit 1; asks first
+python3 engine/runner.py --status                    # where it is: keep the machine on until done
 journalctl -fu sf3000-procedure                      # watch it
 sudo python3 engine/runner.py --cancel               # stop it between steps
 ```
 
-A procedure that cannot be undone needs a snapshot first. `--take-snapshot`
-has the engine take one with Timeshift before step 1, and restore it by
-itself if a step fails; the boot after checks that the machine really is
-back. `--snapshot <name>` records one you took yourself (a VM snapshot, a
-disk image), which the engine cannot restore. Procedures are built and pass
-offline; none has run on a VM yet.
+Before it asks anything, the engine checks that `apt-get update` reaches
+every source, and refuses with nothing changed if one is dead. A procedure
+that cannot be undone needs a snapshot first. `--take-snapshot` has the
+engine take one with Timeshift before step 1, installing Timeshift with apt
+first if it is missing. If a step fails, the engine restores that snapshot by
+itself, and the boot after checks that the machine really is back.
+
+The snapshot leaves out `/home`. It also leaves out `/boot/efi`: on a
+dual-boot machine that is Windows' EFI partition too, and a restore must not
+rewrite Windows' boot files. If the machine goes down in the middle of a
+step, the boot after restores nothing: it may be a boot nobody is watching.
+Running the same command again offers the restore, and `--cancel` leaves the
+machine as it is. `--snapshot <name>` records a snapshot you took yourself
+(a VM snapshot, a disk image), which the engine cannot restore. Procedures
+are built and pass offline; none has run on a VM yet.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

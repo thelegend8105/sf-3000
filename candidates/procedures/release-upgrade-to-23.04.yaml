@@ -1,0 +1,65 @@
+# CANDIDATE - not yet vetted. Visit 1 of the lab's upgrade: Ubuntu 22.10
+# (end of life) to 23.04, in place. One procedure per upgrade, one upgrade per
+# visit, each run with the person there; README.md here has the order and why
+# each part is the way it is.
+#
+#   sudo python3 engine/runner.py --procedures candidates/procedures \
+#        --run release-upgrade-to-23.04 --take-snapshot
+#
+# PRECONDITION: apt works. On a lab machine that means eos-release-dead-repos
+# has healed first (apt points at old-releases). The engine checks apt before
+# it asks, and refuses with nothing changed if a source is dead.
+#
+# 23.04 is past end of life too, so do-release-upgrade will not offer it: the
+# upgrader is fetched from old-releases by hand and its signature checked
+# against Ubuntu's archive keyring (README.md, "Why 23.04 and 23.10 fetch
+# their upgrader by hand").
+id: release-upgrade-to-23.04
+description: Upgrade an end-of-life Ubuntu 22.10 machine in place to 23.04, the next release (visit 1 of 4)
+symptoms:
+  - "my Ubuntu is too old"
+  - "upgrade to the latest Ubuntu"
+  - "this Ubuntu release is no longer supported"
+applies_to:
+  os: linux
+  distros: [ubuntu]
+risk: destructive           # an upgrade cannot be undone, and can stop a machine booting
+requires_privilege: true
+reverse:
+  strategy: snapshot_only   # the way back is a snapshot: --take-snapshot, or one you name
+steps:
+  - id: to-23.04
+    description: 22.10 to 23.04 (end of life; its upgrader comes from old-releases)
+    requires:
+      detect:
+        command: '. /etc/os-release && echo "$VERSION_CODENAME"'
+        produces: string
+      expect:
+        predicate: equals
+        value: kinetic
+    detect:
+      command: |-
+        . /etc/os-release
+        if [ -n "$(dpkg --audit 2>&1)" ]; then echo 0; else echo "$VERSION_ID" | tr -d .; fi
+      produces: integer
+    expect:
+      predicate: greater_than
+      value: 2303
+    run:
+      ubuntu: |-
+        set -e
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+        dir=$(mktemp -d)
+        cd "$dir"
+        url=http://old-releases.ubuntu.com/ubuntu/dists/lunar-updates/main/dist-upgrader-all/current
+        for f in lunar.tar.gz lunar.tar.gz.gpg; do
+          python3 -I -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' "$url/$f" "$f"
+        done
+        gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg lunar.tar.gz.gpg lunar.tar.gz
+        tar -xzf lunar.tar.gz
+        ./lunar --mode=server --frontend=DistUpgradeViewNonInteractive
+    timeout_minutes: 360
+    reboot_after: true
+source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Never run. Planned: tests/procedure-proof/ on the 22.10 VM first, then the four in order from its repos-fixed snapshot with --take-snapshot."

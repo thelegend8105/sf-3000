@@ -13,8 +13,9 @@ Fix path (P1, opt-in via --fix <id>):
   -> rollback on failure
 
 Procedure path (opt-in via --run <id>):
-  confirm once -> hand off to a system service -> for each step:
-  check -> run -> [reboot] -> verify -> log, carrying on after each reboot
+  check apt -> confirm once -> [install Timeshift] -> hand off to a system
+  service -> for each step: check -> run -> [reboot] -> verify -> log,
+  carrying on after each reboot
 
 Fixes NEVER run unless --fix names a playbook explicitly, and procedures never
 run unless --run names one. Without either this is still a read-only
@@ -28,6 +29,7 @@ What it deliberately does NOT do yet:
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -41,15 +43,20 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Missing deps are reported in main(), not here. The procedure service runs
-# this file at boot with --resume, partway through a release upgrade that may
-# have just replaced or removed these packages; that path reads JSON and needs
-# only the standard library.
+# Missing deps are handled in main(), not here: with apt, the engine offers to
+# install them (ensure_engine_deps). The procedure service runs this file at
+# boot with --resume, partway through a release upgrade that may have just
+# replaced or removed these packages; that path reads JSON and needs only the
+# standard library. Imported one at a time, so the engine can name which one
+# is missing.
 try:
     import yaml
+except ImportError:
+    yaml = None
+try:
     from jsonschema import Draft7Validator
 except ImportError:
-    yaml = Draft7Validator = None
+    Draft7Validator = None
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "schema" / "playbook.schema.json"
@@ -308,6 +315,15 @@ def run_command(cmd: str, timeout: int):
         return None, "", f"timed out after {timeout}s"
 
 
+def ask_yes(question: str) -> bool:
+    """One y/N question. Anything but y, including no terminal to ask on, is no."""
+    try:
+        return input(question).strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
 def confirm(pb: dict, fix_cmd: str, snapshot: bool) -> bool:
     strategy = pb["reverse"]["strategy"]
     print()
@@ -328,11 +344,7 @@ def confirm(pb: dict, fix_cmd: str, snapshot: bool) -> bool:
                         initial_indent="  source    : ",
                         subsequent_indent="              "))
     print("=" * 64)
-    try:
-        return input("Run this fix? [y/N] ").strip().lower() == "y"
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
+    return ask_yes("Run this fix? [y/N] ")
 
 
 def rollback(pb: dict, distro: str, record: dict):
@@ -530,18 +542,27 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
 #
 # A procedure is an ordered list of steps, each shaped like a small playbook:
 # a read-only check of whether its goal is reached, a command, and the same
-# check again as its verify. A release upgrade is the case it exists for: four
-# upgrades, a reboot after each, hours in all. No terminal survives that, so
-# after one y/N the engine hands the work to a system service. The service
-# runs a root-owned copy of this file at every boot until the last step is
-# verified or the procedure stops, then removes itself.
+# check again as its verify. A release upgrade is the case it exists for: an
+# upgrade, then a reboot, then the check, an hour or more in all. No terminal
+# should have to survive that, so after one y/N the engine hands the work to a
+# system service. The service runs a root-owned copy of this file at every
+# boot until the last step is verified or the procedure stops, then removes
+# itself. The lab's upgrade is four procedures of one step each, one per
+# visit, each run with the person there (candidates/procedures/README.md).
 #
-# Rules that carry the safety of fix_one over to a run nobody is watching:
+# Rules that carry the safety of fix_one over to a run with no terminal:
+#   * Before the y/N, apt must update from every source; after it, anything
+#     the run needs (Timeshift) is installed, in the foreground, before the
+#     hand-off. A dead source found later would fail the first step after the
+#     snapshot, and so turn into a restore.
 #   * The machine is asked, not the state file. A step whose check already
 #     passes is skipped; one that is pending only because the file says so
 #     is not trusted.
 #   * Nothing runs twice by itself. A boot that finds a step still marked
-#     "running" means the machine went down mid-step: `interrupted`.
+#     "running" means the machine went down mid-step: `interrupted`. With the
+#     engine's snapshot, that boot does not restore it: it may be a boot
+#     nobody is watching. The engine waits, and the next --run offers the
+#     restore (hold_cut_off, offer_undo).
 #   * A failed step is undone if the engine can undo it. With --take-snapshot
 #     the engine takes a Timeshift snapshot before step 1 and, when a step
 #     fails, restores it and reboots; the boot after checks that the machine
@@ -562,21 +583,42 @@ TIMESHIFT_CONF = Path("/etc/timeshift/timeshift.json")
 SNAPSHOT_TIMEOUT = 2 * 3600
 RESTORE_TIMEOUT = 2 * 3600
 # Left out of the engine's snapshots, and so left alone by their restore
-# (Timeshift's restore skips whatever the snapshot excluded). Without this, a
-# restore would roll back the procedure's own state, and the next boot would
-# start the procedure again from step 1.
+# (Timeshift's restore skips whatever the snapshot excluded):
+#   * the procedure's own state, logs and service. Otherwise a restore would
+#     roll back the state file, and the next boot would start the procedure
+#     again from step 1.
+#   * /boot/efi. On the lab's dual-boot machines it is the Windows disk's EFI
+#     partition, holding Windows' boot files as well as Ubuntu's, and a
+#     restore must not rewrite Windows'. Timeshift's restore reinstalls GRUB
+#     afterwards, which writes only Ubuntu's own folder there, as every GRUB
+#     update does.
 SNAPSHOT_EXCLUDES = [
     "/var/lib/sf3000/***",
     "/var/log/sf3000/***",
     f"/etc/systemd/system/{PROCEDURE_UNIT}",
     f"/etc/systemd/system/multi-user.target.wants/{PROCEDURE_UNIT}",
+    "/boot/efi/***",
 ]
+
+APT_CHECK_TIMEOUT = 15 * 60
+APT_INSTALL_TIMEOUT = 30 * 60
+# What `apt-get update` prints when a source failed. It exits 0 when a source
+# cannot be reached (it keeps that source's old lists and only warns), so its
+# messages are read as well as its exit code. Warnings that are not failures,
+# such as a source listed twice, do not match. English, so apt runs under
+# LC_ALL=C.
+APT_FAILURE = re.compile(r"^(Err:|E: |W: Failed to fetch |W: Some index files failed)")
 
 INTERRUPTED = "interrupted"            # the machine went down while a step ran — state unknown
 SNAPSHOT_FAILED = "snapshot_failed"    # the engine's snapshot could not be taken — nothing ran
+INSTALLED = "installed"                # the engine installed something it needs, with apt
+INSTALL_FAILED = "install_failed"      # ...and apt failed; nothing else was run
 
 PENDING, RUNNING, REBOOTING = "pending", "running", "rebooting"
 SNAPSHOTTING, RESTORING = "snapshotting", "restoring"
+# A step was cut off and the engine waits for a person (hold_cut_off); then
+# the person asked for the restore (offer_undo).
+CUT_OFF, RESTORE_ASKED = "cut_off", "restore_asked"
 DONE, FAILED, CANCELLED = "done", "failed", "cancelled"
 FINISHED = (DONE, FAILED, CANCELLED)
 
@@ -699,15 +741,21 @@ def remove_service():
     systemctl("daemon-reload")
 
 
-def stage_procedure(proc: dict, proc_path: Path):
-    """Copy what the service will run into a root-owned place. The service
-    runs at boot as root, so it must not run anything a user can edit — and it
-    must run exactly the text the person approved, even if the clone changes."""
+def make_engine_dirs():
+    """The engine's root-owned directories. It writes there as root, at boot
+    too, so it refuses to write through a symlink a user could have planted."""
     for d in (PROCEDURE_STATE_DIR, PROCEDURE_STATE_DIR / "engine", PROCEDURE_LOG_DIR):
         if d.is_symlink():
             raise OSError(f"{d} is a symlink; refusing to write through it")
         d.mkdir(parents=True, exist_ok=True)
         os.chmod(d, 0o755)
+
+
+def stage_procedure(proc: dict, proc_path: Path):
+    """Copy what the service will run into a root-owned place. The service
+    runs at boot as root, so it must not run anything a user can edit — and it
+    must run exactly the text the person approved, even if the clone changes."""
+    make_engine_dirs()
     shutil.copyfile(Path(__file__).resolve(),
                     PROCEDURE_STATE_DIR / "engine" / "runner.py")
     shutil.copyfile(proc_path, PROCEDURE_STATE_DIR / "procedure.yaml")
@@ -716,7 +764,9 @@ def stage_procedure(proc: dict, proc_path: Path):
 
 
 def run_logged(cmd, timeout: int, log_file: Path):
-    """Run a command, output to a file. Returns (exit_code, tail). exit_code is
+    """Run a command, output to a file. Returns (exit_code, tail): the end of
+    THIS run's output only. The file keeps every attempt, and a lock message
+    left by the attempt before must not read as this one's. exit_code is
     None when the time limit stopped it. A string runs through the shell
     verbatim; a list runs without one. Either way it gets its own process group,
     so the limit stops all of it, not only the shell."""
@@ -725,6 +775,7 @@ def run_logged(cmd, timeout: int, log_file: Path):
     with log_file.open("a", encoding="utf-8") as fh:
         fh.write(f"\n=== {now_utc()} running:\n{shown}\n===\n")
         fh.flush()
+        start = os.fstat(fh.fileno()).st_size
         proc = subprocess.Popen(cmd, shell=isinstance(cmd, str),
                                 stdin=subprocess.DEVNULL, stdout=fh,
                                 stderr=subprocess.STDOUT, start_new_session=True)
@@ -740,7 +791,7 @@ def run_logged(cmd, timeout: int, log_file: Path):
             code = None
     with log_file.open("rb") as fh:
         fh.seek(0, os.SEEK_END)
-        fh.seek(max(0, fh.tell() - 8192))
+        fh.seek(max(start, fh.tell() - 8192))
         tail = fh.read().decode("utf-8", "replace")
     return code, tail
 
@@ -762,6 +813,173 @@ def run_step(cmd: str, timeout: int, log_file: Path):
             time.sleep(BLOCKED_WAIT)
             continue
         return code, tail, attempts
+
+
+# --- apt: checked first, and the engine's own tools ---------------------------
+#
+# Both run in the foreground, with the person there, before anything is handed
+# to the service. The engine installs only what it needs to work (pyyaml and
+# jsonschema to read its library, Timeshift to take its snapshots), only with
+# apt, and only after a y.
+
+def apt_available() -> bool:
+    return shutil.which("apt-get") is not None
+
+
+def check_apt():
+    """Can apt update its lists from every source? Returns (ok, problems),
+    problems being apt's own lines about what failed. A release upgrade starts
+    with this same update; a dead source would fail it there, after the
+    snapshot, and so turn into a restore. Found here, it costs a minute and
+    changes nothing but apt's lists."""
+    make_engine_dirs()
+    log_file = PROCEDURE_LOG_DIR / "apt-check.log"
+    print(f"{MARK['arrow']} checking that apt can update from every source "
+          f"(apt-get update; output in {log_file})", flush=True)
+    code, tail, attempts = run_step(["env", "LC_ALL=C", "apt-get", "update"],
+                                    APT_CHECK_TIMEOUT, log_file)
+    if code is None:
+        return False, [f"apt-get update did not finish in {APT_CHECK_TIMEOUT // 60} min"]
+    if code != 0 and is_lock_contention(tail):
+        return False, [f"the package manager stayed busy through {attempts} "
+                       "attempts; try again in a few minutes"]
+    found = [ln.strip() for ln in tail.splitlines() if APT_FAILURE.match(ln.strip())]
+    # The summary lines name the source and the reason; the Err: lines above
+    # them say the same thing, less clearly.
+    problems = [ln for ln in found if ln.startswith(("E: ", "W: Failed to fetch"))] or found
+    if code != 0 and not problems:
+        problems = [f"apt-get update exited {code}"]
+    if not problems:
+        print(f"  {MARK['HEALTHY']} apt updated from every source", flush=True)
+    return not problems, problems
+
+
+def report_apt_failure(problems):
+    print(f"{MARK['PROBLEM']} apt cannot update from every source, so nothing "
+          "was started:")
+    for line in problems[:FOUND_SHOWN]:
+        print(f"    {line}")
+    if len(problems) > FOUND_SHOWN:
+        print(f"    ... (+{len(problems) - FOUND_SHOWN} more)")
+    print(f"  {MARK['arrow']} fix or remove those sources (/etc/apt/sources.list "
+          "and /etc/apt/sources.list.d/), then run this again. Nothing was "
+          "installed or upgraded.")
+    print(f"  {MARK['arrow']} apt's full output: {PROCEDURE_LOG_DIR / 'apt-check.log'}")
+
+
+def install_packages(packages):
+    """apt-get install in the foreground, waiting out a held lock. Returns
+    (outcome, record fields, tail of apt's output)."""
+    make_engine_dirs()
+    log_file = PROCEDURE_LOG_DIR / "install.log"
+    cmd = ["env", "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive",
+           "apt-get", "-y", "install", *packages]
+    print(f"{MARK['arrow']} installing {', '.join(packages)} with apt "
+          f"(output in {log_file})", flush=True)
+    code, tail, attempts = run_step(cmd, APT_INSTALL_TIMEOUT, log_file)
+    if code == 0:
+        outcome = INSTALLED
+    elif code is not None and is_lock_contention(tail):
+        outcome = BLOCKED
+    else:
+        outcome = INSTALL_FAILED
+    fields = {"fix_command": " ".join(cmd), "fix_exit_code": code,
+              "fix_attempts": attempts, "step_log": str(log_file)}
+    return outcome, fields, tail
+
+
+def install_record(playbook_id: str, procedure_id, distro, fields: dict,
+                   outcome: str) -> dict:
+    return {"timestamp": now_utc(), "playbook_id": playbook_id,
+            "procedure_id": procedure_id, "step_id": "install", "distro": distro,
+            "confirmed": True, "snapshot_taken": False, "snapshot_id": None,
+            **fields, "outcome": outcome}
+
+
+def report_install_failure(packages, outcome: str, fields: dict, tail: str):
+    if outcome == BLOCKED:
+        print(f"{MARK['PROBLEM']} could not install {', '.join(packages)}: the "
+              f"package manager stayed busy through {fields['fix_attempts']} "
+              "attempts. It never ran. Try again in a few minutes.")
+    else:
+        code = fields["fix_exit_code"]
+        how = ("timed out" if code is None else
+               "exited 0, but it is still not installed" if code == 0 else
+               f"exited {code}")
+        print(f"{MARK['PROBLEM']} could not install {', '.join(packages)}: apt "
+              f"{how}. Nothing else was run.")
+        for line in [ln for ln in tail.strip().splitlines() if ln.strip()][-FOUND_SHOWN:]:
+            print(f"    {line}")
+    print(f"  {MARK['arrow']} apt's full output: {fields['step_log']}")
+
+
+def engine_deps_missing():
+    """The Debian packages for what the engine cannot import."""
+    return [pkg for pkg, module in (("python3-yaml", yaml),
+                                    ("python3-jsonschema", Draft7Validator))
+            if module is None]
+
+
+def load_engine_deps():
+    """Import pyyaml and jsonschema again, after apt has installed them."""
+    global yaml, Draft7Validator
+    importlib.invalidate_caches()
+    if yaml is None:
+        try:
+            yaml = importlib.import_module("yaml")
+        except ImportError:
+            pass
+    if Draft7Validator is None:
+        try:   # jsonschema before 3 has no Draft7Validator
+            Draft7Validator = importlib.import_module("jsonschema").Draft7Validator
+        except (ImportError, AttributeError):
+            pass
+
+
+def ensure_engine_deps(distro) -> bool:
+    """pyyaml and jsonschema read and check every playbook and procedure. With
+    apt and sudo, offer to install the missing ones; otherwise say how.
+
+    Never pip on a machine with apt: the service runs /usr/bin/python3 after
+    each upgrade, and a release upgrade moves it to a newer Python that does
+    not see modules pip installed for the old one. apt's packages move with it."""
+    missing = engine_deps_missing()
+    if not missing:
+        return True
+    names = " and ".join(missing)
+    if not apt_available():
+        print("The engine needs pyyaml and jsonschema (3 or later), and they are "
+              "not installed. Install them, for example:  pip install pyyaml jsonschema")
+        return False
+    it = "it" if len(missing) == 1 else "them"
+    if not has_privilege():
+        print(f"The engine needs {names}, which {'is' if it == 'it' else 'are'} "
+              f"not installed. Run it with sudo and it offers to install {it}, "
+              f"or install {it} yourself:  sudo apt-get install {' '.join(missing)}")
+        return False
+    print(f"The engine needs {names} to read and check its playbooks and "
+          f"procedures, and {'it is' if it == 'it' else 'they are'} not installed.")
+    ok, problems = check_apt()
+    if not ok:
+        report_apt_failure(problems)
+        return False
+    if not ask_yes(f"Install {' '.join(missing)} with apt now? [y/N] "):
+        print("Nothing was installed.")
+        return False
+    outcome, fields, tail = install_packages(missing)
+    log_run(install_record("engine/install", None, distro, fields, outcome),
+            procedure_log_path())
+    if outcome != INSTALLED:
+        report_install_failure(missing, outcome, fields, tail)
+        return False
+    load_engine_deps()
+    still = engine_deps_missing()
+    if still:
+        print(f"{MARK['PROBLEM']} apt installed {names}, but the engine still "
+              f"cannot use {' and '.join(still)}.")
+        return False
+    print(f"  {MARK['HEALTHY']} installed {names}", flush=True)
+    return True
 
 
 # --- The engine's own snapshots (Timeshift, rsync mode) ----------------------
@@ -1017,6 +1235,79 @@ def finish_restore(state: dict) -> int:
     return 1
 
 
+def hold_cut_off(state: dict, record: dict) -> int:
+    """A boot found a step still marked running: the machine went down
+    mid-step. The engine's snapshot could undo it now, but this boot may be one
+    nobody is watching, such as the next person to switch the machine on. An
+    undo is a long restore that ends in a forced reboot, and one cut off in
+    turn can leave a machine that does not start. So the engine notes the
+    cut-off, removes its service and waits. The next --run offers the restore
+    (offer_undo); --cancel leaves the machine as it is. The step's record is
+    written when one of them decides its outcome."""
+    record["failure"] = INTERRUPTED
+    state.update(phase=CUT_OFF, record=record, cut_off_seen=now_utc(),
+                 stopped_because=(f"step {record['step_id']}: the machine went "
+                                  "down while it was running, so its state is "
+                                  "unknown"))
+    write_state(state)
+    remove_service()
+    print(f"{MARK['PROBLEM']} step {record['step_id']} was cut off: the machine "
+          "went down while it was running. Nothing was undone; the engine waits "
+          "for a person.", flush=True)
+    print(f"  {MARK['arrow']} to restore Timeshift snapshot "
+          f"{state['engine_snapshot']['name']}: run the same --run command "
+          "again with sudo (it asks first)", flush=True)
+    print(f"  {MARK['arrow']} to leave the machine as it is: sudo python3 "
+          "engine/runner.py --cancel", flush=True)
+    return 1
+
+
+def offer_undo(state: dict) -> int:
+    """--run on a machine whose last step was cut off: offer the restore that
+    hold_cut_off held back. The restore runs under the service, like every
+    other: a terminal closed halfway through a restore must not stop it."""
+    record = state.get("record") or {}
+    snap = state.get("engine_snapshot") or {}
+    if state["phase"] == RESTORE_ASKED and service_active():
+        print(f"{state['procedure_id']}: the restore you asked for is running. "
+              "Keep the machine on; it reboots by itself when it is done. "
+              "See --status.")
+        return 6
+    print(f"{MARK['PROBLEM']} {state['procedure_id']}: step {record.get('step_id')} "
+          "was cut off: the machine went down while it was running. Its state "
+          "is unknown, and nothing has been undone.")
+    if not snap.get("name"):
+        print("There is no snapshot of the engine's to restore. Leave the machine "
+              "as it is with --cancel, and check it by hand.")
+        return 1
+    if not systemd_running():
+        print("Restoring needs systemd, to check the machine after the reboot, "
+              "and this machine is not running it. Refusing.")
+        return 7
+    if not timeshift_installed():
+        print("Restoring needs Timeshift, and it is no longer installed. Refusing.")
+        return 8
+    print(f"  {MARK['arrow']} the engine can restore Timeshift snapshot "
+          f"{snap['name']}, taken just before the step, then reboot and check "
+          f"the machine is back as it was ({snap['fingerprint']}).")
+    print(f"  {MARK['arrow']} that takes a while, and the machine must stay on "
+          "until it has rebooted.")
+    if not ask_yes("Restore it now? [y/N] "):
+        print("Nothing was done. Run this again to restore it, or leave the "
+              "machine as it is with:  sudo python3 engine/runner.py --cancel")
+        return 0
+    record["rollback_requested"] = now_utc()
+    state.update(phase=RESTORE_ASKED, record=record)
+    write_state(state)
+    install_service(state["procedure_id"])
+    print(f"\n  {MARK['arrow']} restoring under the system service "
+          f"{PROCEDURE_UNIT}. The machine reboots by itself when it is done; "
+          "keep it on until then.")
+    print(f"  {MARK['arrow']} watch it:   journalctl -fu {PROCEDURE_UNIT}")
+    print(f"  {MARK['arrow']} where it is: python3 engine/runner.py --status")
+    return 0
+
+
 def resume_procedure() -> int:
     """The service's entry point: carry on from wherever the state says."""
     state = read_state()
@@ -1029,6 +1320,17 @@ def resume_procedure() -> int:
 
     if state["phase"] == RESTORING:
         return finish_restore(state)
+    if state["phase"] == RESTORE_ASKED:
+        # A person asked for the restore that a cut-off held back (offer_undo).
+        begin_restore(state, state["record"], state["stopped_because"])
+        return 1
+    if state["phase"] == CUT_OFF:
+        # Waiting for a person. The service removed itself when it held the
+        # cut-off; if it runs anyway, it must not act.
+        print("A step was cut off and the engine is waiting for a person; doing "
+              "nothing. See --status.", flush=True)
+        remove_service()
+        return 1
 
     snap = state.get("engine_snapshot")
     if snap and not snap.get("name"):
@@ -1063,6 +1365,8 @@ def resume_procedure() -> int:
         record = state.get("record")
 
         if state["phase"] == RUNNING:
+            if snap and snap.get("name"):
+                return hold_cut_off(state, record)
             fail_step(state, record, INTERRUPTED,
                       "the machine went down while it was running, so its "
                       "state is unknown")
@@ -1171,7 +1475,7 @@ def resume_procedure() -> int:
 
 
 def confirm_procedure(proc: dict, plan: list, distro: str, snapshot: str,
-                      engine_snap) -> bool:
+                      engine_snap, install=()) -> bool:
     to_do = [s for s, done in plan if not done]
     reboots = sum(1 for s in to_do if s["reboot_after"])
     print()
@@ -1190,11 +1494,15 @@ def confirm_procedure(proc: dict, plan: list, distro: str, snapshot: str,
     print("-" * 64)
     print(f"  risk      : {proc['risk']}")
     print(f"  undo      : {proc['reverse']['strategy']}")
+    if install:
+        print(f"  install   : {', '.join(install)}, with apt, before anything else")
     if engine_snap:
         print(f"  snapshot  : the engine takes one with Timeshift before step 1,")
-        print(f"              of {engine_snap['device']} (not /home). If a step")
-        print("              fails, it restores that snapshot and reboots by")
-        print("              itself, then checks the machine is back.")
+        print(f"              of {engine_snap['device']} (not /home, not /boot/efi).")
+        print("              If a step fails, it restores that snapshot and")
+        print("              reboots by itself, then checks the machine is back.")
+        print("              If the machine goes down mid-step, it waits for")
+        print("              you: run this command again to restore.")
     if snapshot:
         print(f"  named     : {snapshot} (yours — the engine can neither take "
               "nor restore it)")
@@ -1202,14 +1510,11 @@ def confirm_procedure(proc: dict, plan: list, distro: str, snapshot: str,
                         initial_indent="  source    : ",
                         subsequent_indent="              "))
     print("=" * 64)
-    print(f"Once you answer y, it runs by itself: {len(to_do)} step(s), "
+    first = f"it installs {', '.join(install)}, then " if install else "it "
+    print(f"Once you answer y, {first}runs by itself: {len(to_do)} step(s), "
           f"{reboots} reboot(s). It carries on after each reboot and removes "
-          "itself when it finishes or stops.")
-    try:
-        return input("Run this procedure? [y/N] ").strip().lower() == "y"
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
+          "itself when it finishes or stops. Keep the machine on until then.")
+    return ask_yes("Run this procedure? [y/N] ")
 
 
 def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
@@ -1229,6 +1534,11 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
         print("Re-run under sudo. The engine will not add sudo to a vetted "
               "command on your behalf.")
         return 3
+    state = read_state()
+    if state is not None and state["phase"] in (CUT_OFF, RESTORE_ASKED):
+        # The last procedure here was cut off, and the boot after held its
+        # restore back for a person (hold_cut_off). This run is that person.
+        return offer_undo(state)
     if needs_snapshot(proc) and not (snapshot or take_snapshot_too):
         print(f"{proc['id']} cannot be undone (risk={proc['risk']}, "
               f"undo={proc['reverse']['strategy']}). Refusing to run without a "
@@ -1236,11 +1546,15 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
               "take one yourself and name it (--snapshot <name>).")
         return 4
     engine_snap = None
+    install = []
     if take_snapshot_too:
         if not timeshift_installed():
-            print("--take-snapshot uses Timeshift, which is not installed. "
-                  "Install it first:  sudo apt-get install timeshift")
-            return 8
+            if not apt_available():
+                print("--take-snapshot uses Timeshift, which is not installed, "
+                      "and this machine has no apt to install it with. Install "
+                      "Timeshift first.")
+                return 8
+            install.append("timeshift")   # after the y, before anything else
         devices = snapshot_devices()
         if devices is None:
             print("--take-snapshot could not work out the root partition and "
@@ -1255,7 +1569,6 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
         print(f"{proc['id']} needs systemd to carry on after a reboot, and this "
               "machine is not running it. Refusing to run.")
         return 7
-    state = read_state()
     if state is not None and state["phase"] not in FINISHED:
         print(f"Procedure {state['procedure_id']} is already in progress "
               f"(phase {state['phase']}). See --status; --cancel stops it "
@@ -1283,7 +1596,13 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
                   f"apply to this machine ({r_detail}). Refusing to run.")
             return 5
 
-    if not confirm_procedure(proc, plan, distro, snapshot, engine_snap):
+    if apt_available():
+        ok, problems = check_apt()
+        if not ok:
+            report_apt_failure(problems)
+            return 9
+
+    if not confirm_procedure(proc, plan, distro, snapshot, engine_snap, install):
         log_run({
             "timestamp": now_utc(),
             "playbook_id": proc["id"],
@@ -1295,6 +1614,18 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
         }, log_path)
         print(f"Cancelled. Nothing was run. (logged to {log_path})")
         return 0
+
+    if install:
+        outcome, fields, tail = install_packages(install)
+        if outcome == INSTALLED and not timeshift_installed():
+            outcome = INSTALL_FAILED
+            fields["verify_error"] = "apt exited 0, but timeshift is still not found"
+        log_run(install_record(f"{proc['id']}/install", proc["id"], distro,
+                               fields, outcome), procedure_log_path())
+        if outcome != INSTALLED:
+            report_install_failure(install, outcome, fields, tail)
+            return 8
+        print(f"  {MARK['HEALTHY']} installed {', '.join(install)}", flush=True)
 
     stage_procedure(proc, proc_path)
     write_state({
@@ -1313,10 +1644,31 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
     install_service(proc["id"])
     print(f"\n  {MARK['arrow']} started. It now runs as the system service "
           f"{PROCEDURE_UNIT}, so closing this terminal does not stop it.")
+    print(f"  {MARK['arrow']} keep the machine on until --status says it has "
+          "finished or stopped")
     print(f"  {MARK['arrow']} watch it:   journalctl -fu {PROCEDURE_UNIT}")
     print(f"  {MARK['arrow']} where it is: python3 engine/runner.py --status")
     print(f"  {MARK['arrow']} records go to {procedure_log_path()}")
     return 0
+
+
+def procedures_that_apply(procedures, distro: str, host_os: str):
+    """The ids of the procedures whose next step can run on this machine now.
+    Read-only: their checks only. For after --run named one that does not
+    apply, such as the upgrade after the one this machine needs."""
+    ids = []
+    for proc, _path in procedures:
+        if not applies(proc, host_os, distro)[0]:
+            continue
+        for step in proc["steps"]:
+            status = assess(step)[0]
+            if status == HEALTHY:
+                continue
+            if (status == PROBLEM and "requires" in step
+                    and assess(step["requires"])[0] == HEALTHY):
+                ids.append(proc["id"])
+            break
+    return ids
 
 
 def procedure_status() -> int:
@@ -1335,13 +1687,23 @@ def procedure_status() -> int:
         print(f"named     : {state['snapshot_id']}")
     for h in state["history"]:
         print(f"  {MARK['HEALTHY']} {h['step']}: {h['outcome']}")
-    if state["phase"] not in FINISHED and state["phase"] != RESTORING:
+    if state["phase"] not in FINISHED + (RESTORING, RESTORE_ASKED):
         proc = json.loads((PROCEDURE_STATE_DIR / "procedure.json").read_text(encoding="utf-8"))
         if state["step"] < len(proc["steps"]):
             print(f"  {MARK['arrow']} now: {proc['steps'][state['step']]['id']} "
                   f"({state['phase']})")
     if state.get("stopped_because"):
         print(f"stopped   : {state['stopped_because']}")
+    if state["phase"] == CUT_OFF:
+        print(f"  {MARK['arrow']} nothing was undone: the engine waits for you")
+        print(f"  {MARK['arrow']} to restore the snapshot: run the same --run "
+              "command again with sudo (it asks first)")
+        print(f"  {MARK['arrow']} to leave the machine as it is: "
+              "sudo python3 engine/runner.py --cancel")
+    elif state["phase"] in (RESTORE_ASKED, RESTORING):
+        print(f"  {MARK['arrow']} restoring Timeshift snapshot "
+              f"{(snap or {}).get('name')}: keep the machine on; it reboots by "
+              "itself when it is done")
     print(f"records   : {procedure_log_path()}")
     return 0
 
@@ -1364,6 +1726,20 @@ def cancel_procedure() -> int:
         print(f"{state['procedure_id']} was cut off in phase {state['phase']}; "
               "the next boot will deal with it. --cancel refuses.")
         return 6
+    if state["phase"] in (CUT_OFF, RESTORE_ASKED):
+        # A cut-off step the person chooses not to restore: the machine stays
+        # as the cut-off left it, and the record says so.
+        record = state.get("record") or {}
+        name = (state.get("engine_snapshot") or {}).get("name")
+        record["outcome"] = INTERRUPTED
+        record["rollback_result"] = (f"not attempted: cancelled by hand; Timeshift "
+                                     f"snapshot {name} kept")
+        log_run(record, procedure_log_path())
+        stop_procedure(state, CANCELLED, f"step {record.get('step_id')} was cut "
+                       "off, and the machine was left as it is (cancelled by hand)")
+        print(f"  {MARK['arrow']} Timeshift snapshot {name} is kept. Timeshift "
+              "can still restore it by hand.")
+        return 0
     stop_procedure(state, CANCELLED, "cancelled by hand between steps")
     return 0
 
@@ -1386,14 +1762,16 @@ def main():
                     help="start a multi-step procedure (asks first; carries on "
                          "by itself across reboots)")
     ap.add_argument("--take-snapshot", action="store_true",
-                    help="with --run: take a Timeshift snapshot before step 1, "
-                         "and restore it by itself if a step fails")
+                    help="with --run: take a Timeshift snapshot before step 1 "
+                         "(installing Timeshift with apt if it is missing), and "
+                         "restore it by itself if a step fails")
     ap.add_argument("--snapshot", metavar="NAME",
                     help="with --run: the snapshot or backup you took yourself")
     ap.add_argument("--status", action="store_true",
                     help="show the procedure on this machine, if any")
     ap.add_argument("--cancel", action="store_true",
-                    help="stop a procedure between steps")
+                    help="stop a procedure between steps, or leave a cut-off "
+                         "step as it is instead of restoring it")
     ap.add_argument("--resume", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
 
@@ -1424,8 +1802,8 @@ def main():
     if args.cancel:
         return cancel_procedure()
 
-    if yaml is None or Draft7Validator is None:
-        sys.exit("Missing deps. Run: pip install pyyaml jsonschema --break-system-packages")
+    if not ensure_engine_deps(args.distro):
+        return 1
 
     validator = Draft7Validator(load_schema())
     playbooks, errors = load_playbooks(Path(args.playbooks), validator)
@@ -1458,8 +1836,15 @@ def main():
             print(f"No valid procedure with id {args.run!r} in {args.procedures}.")
             return 2
         proc, path = found
-        return start_procedure(proc, path, args.distro, args.host_os,
-                               args.snapshot, args.take_snapshot, Path(args.log))
+        rc = start_procedure(proc, path, args.distro, args.host_os,
+                             args.snapshot, args.take_snapshot, Path(args.log))
+        if rc == 5:
+            fits = [i for i in procedures_that_apply(procedures, args.distro,
+                                                     args.host_os) if i != proc["id"]]
+            if fits:
+                print(f"  {MARK['arrow']} on this machine, this applies now: "
+                      f"{', '.join(fits)}")
+        return rc
 
     if args.fix:
         chosen = next((p for p in playbooks if p["id"] == args.fix), None)
