@@ -107,8 +107,12 @@ rewrite Windows' boot files. If the machine goes down in the middle of a
 step, the boot after restores nothing: it may be a boot nobody is watching.
 Running the same command again offers the restore, and `--cancel` leaves the
 machine as it is. `--snapshot <name>` records a snapshot you took yourself
-(a VM snapshot, a disk image), which the engine cannot restore. Procedures
-are built and pass offline; none has run on a VM yet.
+(a VM snapshot, a disk image), which the engine cannot restore.
+
+The procedure machinery ran on the 22.10 VM on 2026-10-08 and 2026-10-09
+(`tests/procedure-proof/`, all four runs passed). That covered a reboot, a
+time limit, the engine's own snapshot and its automatic restore, a power cut
+mid-step, and the apt check. The four upgrades have not run yet.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

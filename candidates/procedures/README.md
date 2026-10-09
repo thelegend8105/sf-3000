@@ -65,6 +65,11 @@ both marked so. On 22.10 it would therefore offer 24.04 directly, but the
 `From=mantic`), not 22.10. `-d` does not help either: meta-release-development
 no longer lists 22.10.
 
+The offer shows up on its own. On the 22.10 VM, once apt pointed at
+old-releases, the login message said "New release '24.04.5 LTS' available.
+Run 'do-release-upgrade' to upgrade to it." (2026-10-08). The lab's machines
+will say the same. Do not accept it.
+
 So these two steps do what Ubuntu's EOLUpgrades page describes. They download
 the next release's upgrader from old-releases, from the same URLs that
 meta-release lists. They check its signature against Ubuntu's archive keyring,

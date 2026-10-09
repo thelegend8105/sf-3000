@@ -1,8 +1,9 @@
 # evidence — run logs copied off the test VMs
 
-Each file here is a copy of a VM's `logs/runs.jsonl`, made before the VM was
-reverted. A revert deletes that log, and `logs/` is gitignored, so this folder
-is the only lasting record of what the engine actually did on a machine.
+Each file here is a copy of a VM's run log, made before the VM was reverted:
+`logs/runs.jsonl` in the clone for fixes, `/var/log/sf3000/runs.jsonl` for
+procedures. A revert deletes it, and `logs/` is gitignored, so this folder is
+the only lasting record of what the engine actually did on a machine.
 
 **Rules**
 
@@ -14,6 +15,7 @@ is the only lasting record of what the engine actually did on a machine.
 Copy it off the VM like this (on Windows, from the repo):
 
     scp -P 2222 rht@127.0.0.1:sf-3000/logs/runs.jsonl evidence/ubuntu-26.04-<date>.jsonl
+    scp -P 2223 rht@127.0.0.1:/var/log/sf3000/runs.jsonl evidence/ubuntu-22.10-<date>.jsonl   # procedures
 
 Each VM has its own SSH port: 2222 for 26.04, 2223 for 22.10. The tracker's
 Ubuntu versions sheet lists them all.
@@ -185,3 +187,99 @@ Running checks on linux/ubuntu:
 The remaining checks in the steps were run as written: the hashes, and
 `apt-get update` after each fix. The person who ran them reported no
 mismatch.
+
+### `ubuntu-22.10-2026-10-09.jsonl`
+
+The procedure runs in `tests/procedure-proof/`, Runs A to D, on
+`KineticServer` (Ubuntu 22.10, kinetic), from 2026-10-08 19:56 IST to
+2026-10-09 22:18 IST. The VM started from `repos-fixed`, restored at 18:57 IST
+on 2026-10-08. These are the first procedure runs on a real machine. The
+records are the service's own, from `/var/log/sf3000/runs.jsonl`, not the
+clone's `logs/`. Copied off at 22:18 IST, after Run D. The copy is identical,
+byte for byte, to one made after Run C at 19:46 IST, so Run D wrote nothing.
+
+- Lines 1–3: Run A, no snapshot, commit `1851179`. `one` healed after a
+  reboot (`verify_after` 1). `two` healed. `three` was stopped at its 1-minute
+  limit (`fix_failed`, `fix_exit_code` null), and the procedure stopped. In the
+  terminal: `one two` were there before and after a further `sleep 300`, and
+  the service had removed itself.
+- Line 4: Run B, commit `1851179`. `--take-snapshot` installed Timeshift
+  22.06.5-1 with apt after the y: 196 new packages, 86.8 MB fetched in 42 s.
+- Line 5: Run B's snapshot failed (`snapshot_failed`). Timeshift refused
+  `--tags O` with "Unknown value specified for option --tags (O)", so no step
+  ran, and the service removed itself. Fixed in `2b09c29` (DESIGN §16).
+- Lines 6–8: Run B again, after `git pull` to `1ff0250`. Snapshot
+  `2026-10-09_13-07-11` took 130 s, for 8.2 GB. `one` healed after a reboot,
+  `two` healed, and `three` was stopped at its limit. The engine then restored
+  the snapshot by itself: `rolled_back`, "ok: back to 22.10
+  packages:ec3d46dddee73727". It is the first automatic restore on a real
+  machine.
+- Line 9: Run C, commit `1ff0250`. Snapshot `2026-10-09_14-06-41` took 23 s,
+  linked to the one before. The VM was powered off during step `long`
+  (`VBoxManage controlvm poweroff`), and the boot after restored nothing. The
+  next `--run` offered the restore and was answered n; the one after was
+  answered y, at 19:41 IST (`rollback_requested`). `rolled_back`, with
+  `failure: interrupted` and the same fingerprint.
+
+No package changed during the runs. Every fingerprint reads
+`packages:ec3d46dddee73727`, and GRUB found only the release kernel,
+5.19.0-21, after both restores. So the automatic updates installed nothing.
+
+**Timeshift's own logs** (`snapshot.log` and `restore.log` in
+`/var/log/sf3000/`) were copied off as well, but are not kept here. Both
+restores:
+
+- answered Timeshift's two questions, "Press ENTER to continue" and
+  "Re-install GRUB2 bootloader? (y/n)", with their defaults. The engine gives
+  Timeshift no input, and its source said this would happen (DESIGN §16).
+- deleted the markers the steps had made: `one` and `two` in Run B, `started`
+  in Run C. These are the lines that prove the files came back:
+
+  ```
+  *deleting   var/lib/sf3000-proof/two
+  *deleting   var/lib/sf3000-proof/one
+  *deleting   var/lib/sf3000-proof/
+  ```
+
+- left alone the engine's state, its logs, its service files and everything
+  inside `/home/rht`. Run C's restore reset the timestamp of the folder
+  `/home/rht` itself.
+- reinstalled GRUB ("Installation finished. No error reported."), then
+  rebooted with `reboot -f`.
+
+Run C's `restore.log` ends in 11 zero bytes. The forced reboot cut off the
+file's last write.
+
+**Two results write no record.** They come from the terminal, shown in
+screenshots and confirmed by the person who ran them:
+
+- **The boot after Run C's power cut** held the restore back and removed the
+  service. The journal (UTC):
+
+  ```
+  2026-10-09T14:09:00+0000 kineticvm systemd[1]: Starting SF 3000: carry on procedure cut-off-proof after a reboot...
+  2026-10-09T14:09:03+0000 kineticvm systemd[1]: sf3000-procedure.service: Current command vanished from the unit file, execution of the command list won't be resumed.
+  2026-10-09T14:09:03+0000 kineticvm python3[658]: ✗ step long was cut off: the machine went down while it was running. Nothing was undone; the engine waits for a person.
+  2026-10-09T14:09:03+0000 kineticvm python3[658]:   → to restore Timeshift snapshot 2026-10-09_14-06-41: run the same --run command again with sudo (it asks first)
+  2026-10-09T14:09:03+0000 kineticvm python3[658]:   → to leave the machine as it is: sudo python3 engine/runner.py --cancel
+  2026-10-09T14:09:03+0000 kineticvm systemd[1]: sf3000-procedure.service: Deactivated successfully.
+  2026-10-09T14:09:03+0000 kineticvm systemd[1]: Started sf3000-procedure.service.
+  ```
+
+- **Run D**, just before 22:18 IST. Two dead sources were added: a host under
+  `.invalid`, and a suite old-releases does not have. The apt check refused
+  with exit 9 before the box, and `--status` still showed Run C:
+
+  ```
+  → checking that apt can update from every source (apt-get update; output in /var/log/sf3000/apt-check.log)
+  ✗ apt cannot update from every source, so nothing was started:
+      E: The repository 'http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite Release' does not have a Release file.
+    → fix or remove those sources (/etc/apt/sources.list and /etc/apt/sources.list.d/), then run this again. Nothing was installed or upgraded.
+    → apt's full output: /var/log/sf3000/apt-check.log
+  exit 9
+  ```
+
+  It named only the missing suite. apt 2.5.3 prints no "Failed to fetch" line
+  for any source once one source fails hard (`apt-pkg/update.cc`). So the dead
+  host appeared only on an `Err:` line, and the engine's report left those
+  out.

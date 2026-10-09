@@ -303,9 +303,12 @@ proactive sweep) live in the MVP.
   2026-10-08 the upgrade became four procedures, one per supervised visit.
   The engine also gained an apt check before anything runs, installs
   Timeshift itself, leaves the shared EFI partition out of its snapshots, and
-  waits for a person after a cut-off. All of it passes offline; none has run
-  on a VM yet. Remaining: prove procedures on the VM (`tests/procedure-proof/`,
-  then the four upgrades), then on an EFI desktop VM, finish proving
+  waits for a person after a cut-off. On 2026-10-08 and 2026-10-09 that
+  machinery ran on the 22.10 VM (`tests/procedure-proof/`, Runs A to D): a
+  reboot and the check after it, a time limit, Timeshift installed by the
+  engine, its snapshot restored by itself, a power cut held for a person, and
+  the apt check's refusal. Remaining: the four upgrades on that VM, then an
+  EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
@@ -398,8 +401,24 @@ and a42e25c. The snapshot gate and the privilege refusal write no record by
 design; their results are the terminal output, confirmed by the person who ran
 them.
 
+**Procedures ran on a real machine for the first time on 2026-10-08 and
+2026-10-09**, on the 22.10 VM (`tests/procedure-proof/`, Runs A to D). Seen
+there: a step verified after the reboot it asked for, a step stopped at its
+time limit (`fix_failed`), the engine installing Timeshift with apt
+(`installed`), its own snapshot restored by itself after a failed step
+(`rolled_back`), and a step cut off by a power-off. The boot after that cut
+restored nothing and waited, and the restore ran only when the person asked
+(`rolled_back`, `failure: interrupted`). The apt check refused a dead source
+with exit 9, before asking anything. Run B's first snapshot failed on a
+Timeshift bug (§16), and the engine stopped without running a step
+(`snapshot_failed`). The records are in
+`evidence/ubuntu-22.10-2026-10-09.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
-(`rollback_result: blocked (retryable)`). It passes offline.
+(`rollback_result: blocked (retryable)`). It passes offline. Nor have these
+procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
+that fails after its reboot, and `--cancel` after a cut-off. Nor have the
+four upgrade procedures themselves.
 
 ---
 
@@ -848,7 +867,9 @@ questions under `--scripted`, with the same defaults.
 
 ---
 
-*Last updated: revision 18 — the snapshot command drops `--tags O`, which
+*Last updated: revision 19 — recorded the procedure runs on the 22.10 VM
+(2026-10-08 and 2026-10-09, Runs A to D, all passed); §12 and §13 updated.
+Revision 18 — the snapshot command drops `--tags O`, which
 Timeshift 22.06.5 to 24.01.1 refuse; found when Run B's snapshot failed on
 the 22.10 VM (2026-10-09); §16 updated.
 Revision 17 — the lab's upgrade split into four procedures,

@@ -1,9 +1,11 @@
 # procedure-proof — VM runs for the procedure machinery
 
-**Not yet run on a VM.** `test_procedure.py` passes offline (stubbed machine,
-no VM; on Python 3.12 and 3.10). These runs prove the same machinery on a
-real one, with fixtures that take minutes, before any real upgrade relies on
-it.
+**Runs A to D passed on the 22.10 VM on 2026-10-08 and 2026-10-09.** The
+records are in `evidence/ubuntu-22.10-2026-10-09.jsonl`, with notes in
+`evidence/README.md`. `test_procedure.py` passes offline too (stubbed
+machine, no VM; on Python 3.12 and 3.10). These runs prove the same machinery
+on a real machine, with fixtures that take minutes, before any real upgrade
+relies on it.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -32,9 +34,15 @@ installed yet, because Run B installs it, and that needs a working apt.
 
 ```bash
 # 0. Setup (on Windows): restore repos-fixed, start the VM, ssh -p 2223 rht@127.0.0.1
+#    Every login starts in ~, so begin each one with: cd ~/sf-3000
 cd ~/sf-3000 && git pull && git log --oneline -1
 python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed
 which timeshift || echo "no timeshift: good"
+# Switch off the automatic updates, and wait until neither is running. They
+# catch up within an hour of a boot, and could install packages in the middle
+# of a snapshot or a restore.
+sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
+systemctl is-active apt-daily.service apt-daily-upgrade.service   # inactive, twice
 
 # --- Run A: no snapshot --------------------------------------------------
 sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure-proof
@@ -61,7 +69,9 @@ sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure
 journalctl -fu sf3000-procedure      # "taking a Timeshift snapshot" (minutes), then one, then a reboot
 
 # The VM reboots TWICE: once after step one; then, after three fails,
-# Timeshift restores and reboots by itself. After the second, ssh back in:
+# Timeshift restores and reboots by itself. Between the two, watch with
+# journalctl -fu sf3000-procedure: the restore rolls those lines back out of
+# the journal. After the second reboot, ssh back in:
 python3 engine/runner.py --status    # stopped: ... Restored Timeshift snapshot <name>
 ls /var/lib/sf3000-proof             # "No such file or directory": restored away
 which timeshift                      # still there: installed before the snapshot
@@ -75,6 +85,7 @@ sudo python3 engine/runner.py --procedures tests/procedure-proof --run cut-off-p
 # Answer y. Then wait for step long to start (after the snapshot, minutes):
 journalctl -fu sf3000-procedure      # until "long: ... running"
 ls /var/lib/sf3000-proof             # started
+# Wait about a minute more, so the snapshot has reached the disk.
 # Now, on Windows, power the VM off (not a shutdown):
 #   E:\VirtualBox\VBoxManage.exe controlvm KineticServer poweroff
 # Start it again, ssh back in:
@@ -94,9 +105,10 @@ ls /var/lib/sf3000-proof             # "No such file or directory": restored awa
 printf 'deb http://sf3000-no-such-host.invalid/ubuntu kinetic main\ndeb http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite main\n' \
   | sudo tee /etc/apt/sources.list.d/sf3000-dead.list
 sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure-proof --take-snapshot; echo "exit $?"
-# exit 9: "apt cannot update from every source, so nothing was started", and
-# both dead lines named (W: Failed to fetch ... and E: ... does not have a
-# Release file). No box, no y/N, nothing staged.
+# exit 9: "apt cannot update from every source, so nothing was started".
+# No box, no y/N, nothing staged. On 2026-10-09 it named only the missing
+# suite (E: ... does not have a Release file), not the dead host: see
+# "Things to know".
 python3 engine/runner.py --status    # still Run C's: nothing new was started
 sudo rm /etc/apt/sources.list.d/sf3000-dead.list
 
@@ -120,6 +132,14 @@ Expected records in `/var/log/sf3000/runs.jsonl`, 8 lines:
 
 Run D writes no record. It changed nothing, like the other refusals.
 
+The 2026-10-09 file has 9 records, not 8. Run B's first try also wrote
+`snapshot_failed`, when Timeshift refused `--tags O` (fixed since; DESIGN
+§16). To list the records on the VM:
+
+```bash
+python3 -c 'import json; [print(r.get("step_id"), r["outcome"], r.get("failure") or "", r.get("rollback_result") or "") for r in map(json.loads, open("/var/log/sf3000/runs.jsonl"))]'
+```
+
 Things to know when reading the output:
 
 - **The procedure's records are not in `~/sf-3000/logs/`.** The service writes
@@ -141,6 +161,19 @@ Things to know when reading the output:
 - **Run A's step three reads `fix_failed`, not `interrupted`.** The time limit
   stopped it, and the engine was still running to record that. `interrupted`
   is for a machine that went down mid-step: Run C.
+- **Two systemd lines look wrong but are not.** "Current command vanished
+  from the unit file" (in yellow), and a "Started sf3000-procedure.service."
+  after "Deactivated successfully". Both come from the engine deleting its own
+  service file while the service is still running. The service does not
+  start again.
+- **apt can name only one dead source.** Once one source fails hard, such as
+  a suite with no Release file, apt 2.5.3 prints no "Failed to fetch" line
+  for any source. A dead host then appears only on an `Err:` line, which the
+  engine's report leaves out. It still refuses.
+- **`restore.log` can end in zero bytes.** Timeshift's restore ends in
+  `reboot -f`, which can cut off the file's last write.
+- **A restore resets the timestamp of `/home/rht`**, the folder itself.
+  Timeshift leaves out what is inside a home folder, not the folder.
 - **Not proven here:** the engine installing python3-jsonschema itself. A
   server VM has it already, because cloud-init depends on it. The lab's
   desktops do not, and neither will an EFI desktop VM.
