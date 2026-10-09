@@ -1059,8 +1059,11 @@ def prepare_timeshift_config(root_uuid: str):
 
 
 def snapshot_create_cmd(snap: dict) -> list:
+    # No --tags. Timeshift 22.06.5 refuses "--tags O" ("Unknown value"): its
+    # check leaves O out, though its help lists it. --create tags a snapshot
+    # O, on-demand, by itself.
     return ["timeshift", "--create", "--rsync", "--snapshot-device", snap["device"],
-            "--comments", snap["comment"], "--tags", "O", "--scripted"]
+            "--comments", snap["comment"], "--scripted"]
 
 
 def snapshot_restore_cmd(snap: dict) -> list:

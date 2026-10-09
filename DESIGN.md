@@ -828,9 +828,30 @@ busy, and a step that had changed something would have been left without a
 restore. It now reads only the current attempt. Found while building the apt
 check, and covered offline.
 
+**2026-10-09 — The engine's snapshot command passes no `--tags`.** Run B on
+the 22.10 VM stopped at its snapshot: Timeshift 22.06.5 answered
+`--tags O` with "Unknown value specified for option --tags (O)", and listed
+O among the values it expects. Its check accepts B, H, D, W and M only. The
+same check is in 22.11.2, 23.07.1 and 24.01.1, the versions the upgrades
+will meet on their way to 24.04; 25.12.4 fixed it. Every one of them tags a
+snapshot taken with `--create` as on-demand by itself, so the option is
+dropped. The engine did what it should: no snapshot, so no step ran
+(`snapshot_failed`). The offline proof had stubbed Timeshift and accepted
+any options, which is how this got past it. It now checks the command's
+exact options, as it already did for the restore.
+
+The restore command was read again against the same five versions. Up to
+24.01.1, `--scripted` does not skip the restore's questions. The engine
+gives Timeshift no input, so each question takes its default, and
+`--grub-device` makes reinstalling GRUB the default. 25.12.4 skips the
+questions under `--scripted`, with the same defaults.
+
 ---
 
-*Last updated: revision 17 — the lab's upgrade split into four procedures,
+*Last updated: revision 18 — the snapshot command drops `--tags O`, which
+Timeshift 22.06.5 to 24.01.1 refuse; found when Run B's snapshot failed on
+the 22.10 VM (2026-10-09); §16 updated.
+Revision 17 — the lab's upgrade split into four procedures,
 one per supervised visit; apt checked before anything runs; Timeshift and the
 engine's Python packages installed with apt after a y; `/boot/efi` left out
 of snapshots; a cut-off step waits for a person; a step's output read one

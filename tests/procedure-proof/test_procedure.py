@@ -907,6 +907,10 @@ check("state dir, log dir, unit, enable link, the EFI partition", runner.SNAPSHO
     runner.PROCEDURE_UNIT_PATH.as_posix(),
     f"/etc/systemd/system/multi-user.target.wants/{runner.PROCEDURE_UNIT}",
     "/boot/efi/***"])
+check("create passes no --tags: Timeshift 22.06.5 refuses O",
+      runner.snapshot_create_cmd({"device": "/dev/sda2", "comment": "C"}),
+      ["timeshift", "--create", "--rsync", "--snapshot-device", "/dev/sda2",
+       "--comments", "C", "--scripted"])
 check("restore names the GRUB disk and answers yes",
       runner.snapshot_restore_cmd({"name": "N", "device": "/dev/sda2", "grub_device": "/dev/sda"}),
       ["timeshift", "--restore", "--snapshot", "N", "--target-device", "/dev/sda2",
