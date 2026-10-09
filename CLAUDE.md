@@ -80,7 +80,9 @@ What takes several files to see:
   excluded too: on the lab's dual-boot machines it holds Windows' boot files.
   A restore counts as done only when a fingerprint (the release plus every
   installed package version) matches the one taken before the snapshot.
-  Timeshift's exit code is never trusted.
+  Timeshift's exit code is never trusted. The engine holds dpkg's frontend
+  lock from the fingerprint to the end of the snapshot, and through the
+  restore, and syncs the snapshot to disk before step 1.
 - **The offline tests patch `runner`'s module-level names**: functions such
   as `run_command`, `run_logged`, `assess` and `systemctl`, and path
   constants such as `PROCEDURE_STATE_DIR`, pointed at a temp folder.

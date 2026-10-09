@@ -601,6 +601,8 @@ SNAPSHOT_EXCLUDES = [
 ]
 
 APT_CHECK_TIMEOUT = 15 * 60
+APT_CHECK_OUTPUT = 1 << 20    # read all of it: a dead source's Err: line comes early
+APT_SHOWN = 10                # the failing sources printed before "... (+N more)"
 APT_INSTALL_TIMEOUT = 30 * 60
 # What `apt-get update` prints when a source failed. It exits 0 when a source
 # cannot be reached (it keeps that source's old lists and only warns), so its
@@ -763,13 +765,13 @@ def stage_procedure(proc: dict, proc_path: Path):
         json.dumps(proc, indent=2), encoding="utf-8")
 
 
-def run_logged(cmd, timeout: int, log_file: Path):
-    """Run a command, output to a file. Returns (exit_code, tail): the end of
-    THIS run's output only. The file keeps every attempt, and a lock message
-    left by the attempt before must not read as this one's. exit_code is
-    None when the time limit stopped it. A string runs through the shell
-    verbatim; a list runs without one. Either way it gets its own process group,
-    so the limit stops all of it, not only the shell."""
+def run_logged(cmd, timeout: int, log_file: Path, tail_bytes: int = 8192):
+    """Run a command, output to a file. Returns (exit_code, tail): the last
+    tail_bytes of THIS run's output only. The file keeps every attempt, and a
+    lock message left by the attempt before must not read as this one's.
+    exit_code is None when the time limit stopped it. A string runs through
+    the shell verbatim; a list runs without one. Either way it gets its own
+    process group, so the limit stops all of it, not only the shell."""
     log_file.parent.mkdir(parents=True, exist_ok=True)
     shown = cmd if isinstance(cmd, str) else " ".join(cmd)
     with log_file.open("a", encoding="utf-8") as fh:
@@ -791,12 +793,12 @@ def run_logged(cmd, timeout: int, log_file: Path):
             code = None
     with log_file.open("rb") as fh:
         fh.seek(0, os.SEEK_END)
-        fh.seek(max(start, fh.tell() - 8192))
+        fh.seek(max(start, fh.tell() - tail_bytes))
         tail = fh.read().decode("utf-8", "replace")
     return code, tail
 
 
-def run_step(cmd: str, timeout: int, log_file: Path):
+def run_step(cmd: str, timeout: int, log_file: Path, tail_bytes: int = 8192):
     """Run a step, waiting out a held package-manager lock. Returns
     (exit_code, tail, attempts). Retrying is safe only because `blocked`
     means the package manager never started (see LOCK_CONTENTION_PATTERNS);
@@ -804,7 +806,7 @@ def run_step(cmd: str, timeout: int, log_file: Path):
     attempts = 0
     while True:
         attempts += 1
-        code, tail = run_logged(cmd, timeout, log_file)
+        code, tail = run_logged(cmd, timeout, log_file, tail_bytes)
         if code not in (0, None) and is_lock_contention(tail) \
                 and attempts < BLOCKED_RETRIES:
             print(f"  {MARK['arrow']} the package manager is busy — waiting "
@@ -837,16 +839,14 @@ def check_apt():
     print(f"{MARK['arrow']} checking that apt can update from every source "
           f"(apt-get update; output in {log_file})", flush=True)
     code, tail, attempts = run_step(["env", "LC_ALL=C", "apt-get", "update"],
-                                    APT_CHECK_TIMEOUT, log_file)
+                                    APT_CHECK_TIMEOUT, log_file, APT_CHECK_OUTPUT)
     if code is None:
         return False, [f"apt-get update did not finish in {APT_CHECK_TIMEOUT // 60} min"]
     if code != 0 and is_lock_contention(tail):
         return False, [f"the package manager stayed busy through {attempts} "
                        "attempts; try again in a few minutes"]
     found = [ln.strip() for ln in tail.splitlines() if APT_FAILURE.match(ln.strip())]
-    # The summary lines name the source and the reason; the Err: lines above
-    # them say the same thing, less clearly.
-    problems = [ln for ln in found if ln.startswith(("E: ", "W: Failed to fetch"))] or found
+    problems = apt_problems(tail) or found
     if code != 0 and not problems:
         problems = [f"apt-get update exited {code}"]
     if not problems:
@@ -854,13 +854,41 @@ def check_apt():
     return not problems, problems
 
 
+def apt_problems(output: str):
+    """The sources apt-get update could not use, in apt's own words. Its
+    summary lines (E: and "W: Failed to fetch") name the source and the
+    reason. But once one source fails hard, such as a suite with no Release
+    file, apt prints no "Failed to fetch" line for any source (apt-pkg/update.cc,
+    2.5.3). A host that cannot be reached is then named only on its Err: line,
+    "Err:5 http://host/ubuntu kinetic InRelease", with the reason on the line
+    under it. So each Err: line whose source no summary line names is kept
+    too, joined to its reason."""
+    lines = [ln.strip() for ln in output.splitlines()]
+    raw = output.splitlines()
+    summary = [ln for ln in lines if ln.startswith(("E: ", "W: Failed to fetch "))]
+    problems = list(summary)
+    for i, ln in enumerate(lines):
+        if not ln.startswith("Err:"):
+            continue
+        parts = ln.split()
+        if len(parts) >= 3 and any(f"{parts[1]} {parts[2]} " in s
+                                   or f"{parts[1]}/dists/{parts[2]}/" in s for s in summary):
+            continue
+        under = raw[i + 1] if i + 1 < len(raw) else ""
+        reason = under.strip() if under[:1].isspace() else ""
+        named = f"{ln}  {reason}" if reason else ln
+        if named not in problems:
+            problems.append(named)
+    return problems
+
+
 def report_apt_failure(problems):
     print(f"{MARK['PROBLEM']} apt cannot update from every source, so nothing "
           "was started:")
-    for line in problems[:FOUND_SHOWN]:
+    for line in problems[:APT_SHOWN]:
         print(f"    {line}")
-    if len(problems) > FOUND_SHOWN:
-        print(f"    ... (+{len(problems) - FOUND_SHOWN} more)")
+    if len(problems) > APT_SHOWN:
+        print(f"    ... (+{len(problems) - APT_SHOWN} more)")
     print(f"  {MARK['arrow']} fix or remove those sources (/etc/apt/sources.list "
           "and /etc/apt/sources.list.d/), then run this again. Nothing was "
           "installed or upgraded.")
@@ -1101,6 +1129,65 @@ def take_snapshot(snap: dict):
     return None, f"timeshift exited 0 but the new snapshot was not found; see {log_file}"
 
 
+# --- Keeping packages still while the system is copied -------------------------
+#
+# After a restore, the engine checks the machine against a fingerprint of its
+# installed packages, taken just before the snapshot. If unattended-upgrades,
+# the Software Updater or a person's apt changed packages in between, or during
+# the restore, that check would fail a good restore, or the copy would hold a
+# half-installed package. All of them take dpkg's frontend lock before they
+# change anything, so the engine holds that lock around the fingerprint and the
+# snapshot, and around the restore.
+
+DPKG_FRONTEND_LOCK = Path("/var/lib/dpkg/lock-frontend")
+
+
+def try_package_manager_lock():
+    """One try at dpkg's frontend lock, taken the way apt takes it (fcntl, not
+    flock). Returns the open descriptor that holds it, -1 on a machine with no
+    dpkg, or None while another program holds it."""
+    if not DPKG_FRONTEND_LOCK.parent.is_dir():
+        return -1
+    import fcntl   # Linux only, like the rest of the procedure path
+    fd = os.open(DPKG_FRONTEND_LOCK, os.O_RDWR | os.O_CREAT, 0o640)
+    try:
+        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def hold_package_manager(before: str):
+    """Wait for dpkg's frontend lock and keep it. Returns what to hand to
+    release_package_manager(), or None when the lock stayed taken through
+    BLOCKED_RETRIES tries."""
+    for attempt in range(1, BLOCKED_RETRIES + 1):
+        fd = try_package_manager_lock()
+        if fd is not None:
+            return fd
+        if attempt < BLOCKED_RETRIES:
+            print(f"  {MARK['arrow']} the package manager is busy — waiting "
+                  f"{BLOCKED_WAIT}s before {before} (attempt {attempt + 1} of "
+                  f"{BLOCKED_RETRIES})", flush=True)
+            time.sleep(BLOCKED_WAIT)
+    return None
+
+
+def release_package_manager(fd):
+    if fd is not None and fd >= 0:
+        os.close(fd)          # closing the descriptor drops the lock
+
+
+def sync_disks():
+    """Write out everything still waiting in memory (sync(2)). Timeshift does
+    not, after a snapshot: for half a minute or so, part of the copy may exist
+    only in memory, and a power cut then would leave a damaged snapshot for a
+    restore to copy back."""
+    if hasattr(os, "sync"):
+        os.sync()
+
+
 def step_record(state: dict, step: dict, cmd: str) -> dict:
     snap = state.get("engine_snapshot")
     return {
@@ -1186,14 +1273,29 @@ def fail_step(state: dict, record: dict, failure: str, reason: str, changed=True
 def begin_restore(state: dict, record: dict, reason: str):
     """Restore the engine's snapshot. Timeshift reboots when it finishes; the
     boot after verifies (resume_procedure, phase RESTORING). The step's record
-    is written then, with the restore's result as its outcome."""
+    is written then, with the restore's result as its outcome.
+
+    dpkg's lock comes first, and only then does the phase say RESTORING. A
+    machine that goes down while the engine waits for the lock has restored
+    nothing, and the boot after must not check a restore that never ran."""
     snap = state["engine_snapshot"]
     record["rollback_method"] = "timeshift"
     cmd = snapshot_restore_cmd(snap)
+    print(f"{MARK['PROBLEM']} {reason}", flush=True)
+    lock = hold_package_manager("the restore")
+    if lock is None:
+        record["outcome"] = ROLLBACK_FAILED
+        record["rollback_result"] = (f"not started: the package manager stayed busy "
+                                     f"through {BLOCKED_RETRIES} attempts. Timeshift "
+                                     f"snapshot {snap['name']} is untouched")
+        log_run(record, procedure_log_path())
+        stop_procedure(state, FAILED, f"{reason}; the restore could not start, because "
+                       "the package manager stayed busy. Timeshift snapshot "
+                       f"{snap['name']} is untouched: restore it with Timeshift by hand.")
+        return
     state.update(phase=RESTORING, record=record, stopped_because=reason,
                  restore_started=now_utc())
     write_state(state)
-    print(f"{MARK['PROBLEM']} {reason}", flush=True)
     print(f"  {MARK['arrow']} restoring Timeshift snapshot {snap['name']}, then "
           "rebooting", flush=True)
     log_file = PROCEDURE_LOG_DIR / "restore.log"
@@ -1203,8 +1305,9 @@ def begin_restore(state: dict, record: dict, reason: str):
     # the check after it. A failed exit may have left a half-copied system;
     # say so and stop rather than reboot into it.
     if code == 0:
-        reboot_machine()
+        reboot_machine()      # dpkg's lock goes with this process
         return
+    release_package_manager(lock)
     record["outcome"] = ROLLBACK_FAILED
     record["rollback_result"] = (f"timeshift --restore "
                                  f"{'timed out' if code is None else f'exited {code}'}"
@@ -1343,10 +1446,33 @@ def resume_procedure() -> int:
             return 1
         state["phase"] = SNAPSHOTTING
         write_state(state)
-        snap["fingerprint"] = machine_fingerprint()
-        print(f"{MARK['arrow']} taking a Timeshift snapshot of {snap['device']} "
-              f"before step 1 (machine: {snap['fingerprint']})", flush=True)
-        name, detail = take_snapshot(snap)
+        lock = hold_package_manager("the snapshot")
+        if lock is None:
+            log_run({"timestamp": now_utc(),
+                     "playbook_id": f"{state['procedure_id']}/snapshot",
+                     "procedure_id": state["procedure_id"], "step_id": "snapshot",
+                     "distro": state["distro"], "confirmed": True,
+                     "snapshot_taken": False, "snapshot_id": None,
+                     "blocked_reason": (f"the package manager stayed busy through "
+                                        f"{BLOCKED_RETRIES} attempts"),
+                     "outcome": BLOCKED},
+                    procedure_log_path())
+            stop_procedure(state, FAILED, "the package manager stayed busy, so no "
+                           "snapshot was taken and no step was run. Start the "
+                           "procedure again later.")
+            return 1
+        try:
+            snap["fingerprint"] = machine_fingerprint()
+            print(f"{MARK['arrow']} taking a Timeshift snapshot of {snap['device']} "
+                  f"before step 1 (machine: {snap['fingerprint']})", flush=True)
+            name, detail = take_snapshot(snap)
+            if name is not None:
+                # Until this returns, the phase still says SNAPSHOTTING: a power
+                # cut now stops the procedure instead of trusting the copy.
+                print(f"  {MARK['arrow']} writing the snapshot to disk", flush=True)
+                sync_disks()
+        finally:
+            release_package_manager(lock)
         if name is None:
             log_run({"timestamp": now_utc(),
                      "playbook_id": f"{state['procedure_id']}/snapshot",

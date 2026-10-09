@@ -39,8 +39,8 @@ cd ~/sf-3000 && git pull && git log --oneline -1
 python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed
 which timeshift || echo "no timeshift: good"
 # Switch off the automatic updates, and wait until neither is running. They
-# catch up within an hour of a boot, and could install packages in the middle
-# of a snapshot or a restore.
+# catch up within an hour of a boot. The engine holds apt's lock while it
+# snapshots or restores, so they would only make it wait.
 sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
 systemctl is-active apt-daily.service apt-daily-upgrade.service   # inactive, twice
 
@@ -85,7 +85,6 @@ sudo python3 engine/runner.py --procedures tests/procedure-proof --run cut-off-p
 # Answer y. Then wait for step long to start (after the snapshot, minutes):
 journalctl -fu sf3000-procedure      # until "long: ... running"
 ls /var/lib/sf3000-proof             # started
-# Wait about a minute more, so the snapshot has reached the disk.
 # Now, on Windows, power the VM off (not a shutdown):
 #   E:\VirtualBox\VBoxManage.exe controlvm KineticServer poweroff
 # Start it again, ssh back in:
@@ -105,10 +104,10 @@ ls /var/lib/sf3000-proof             # "No such file or directory": restored awa
 printf 'deb http://sf3000-no-such-host.invalid/ubuntu kinetic main\ndeb http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite main\n' \
   | sudo tee /etc/apt/sources.list.d/sf3000-dead.list
 sudo python3 engine/runner.py --procedures tests/procedure-proof --run procedure-proof --take-snapshot; echo "exit $?"
-# exit 9: "apt cannot update from every source, so nothing was started".
-# No box, no y/N, nothing staged. On 2026-10-09 it named only the missing
-# suite (E: ... does not have a Release file), not the dead host: see
-# "Things to know".
+# exit 9: "apt cannot update from every source, so nothing was started",
+# and both dead sources named: the missing suite (E: ... does not have a
+# Release file) and the dead host (its Err: line). No box, no y/N, nothing
+# staged.
 python3 engine/runner.py --status    # still Run C's: nothing new was started
 sudo rm /etc/apt/sources.list.d/sf3000-dead.list
 
@@ -166,10 +165,16 @@ Things to know when reading the output:
   after "Deactivated successfully". Both come from the engine deleting its own
   service file while the service is still running. The service does not
   start again.
-- **apt can name only one dead source.** Once one source fails hard, such as
-  a suite with no Release file, apt 2.5.3 prints no "Failed to fetch" line
-  for any source. A dead host then appears only on an `Err:` line, which the
-  engine's report leaves out. It still refuses.
+- **apt's summary can leave a dead source out.** Once one source fails hard,
+  such as a suite with no Release file, apt 2.5.3 prints no "Failed to fetch"
+  line for any source. A dead host then appears only on an `Err:` line. The
+  engine adds those lines; on 2026-10-09, before it did, Run D named only one
+  source.
+- **"the package manager is busy — waiting 60s before the snapshot"** (or
+  "before the restore"): another program holds apt's lock. The engine holds
+  that lock while it snapshots or restores, so it waits its turn first.
+- **"writing the snapshot to disk"** comes after every snapshot. Timeshift
+  does not flush its copy itself.
 - **`restore.log` can end in zero bytes.** Timeshift's restore ends in
   `reboot -f`, which can cut off the file's last write.
 - **A restore resets the timestamp of `/home/rht`**, the folder itself.

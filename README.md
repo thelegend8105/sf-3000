@@ -99,7 +99,9 @@ every source, and refuses with nothing changed if one is dead. A procedure
 that cannot be undone needs a snapshot first. `--take-snapshot` has the
 engine take one with Timeshift before step 1, installing Timeshift with apt
 first if it is missing. If a step fails, the engine restores that snapshot by
-itself, and the boot after checks that the machine really is back.
+itself, and the boot after checks that the machine really is back. While it
+takes or restores the snapshot, it holds apt's lock, so automatic updates
+cannot change packages in the middle.
 
 The snapshot leaves out `/home`. It also leaves out `/boot/efi`: on a
 dual-boot machine that is Windows' EFI partition too, and a restore must not

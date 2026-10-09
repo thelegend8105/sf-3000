@@ -36,6 +36,9 @@ upgrades from, and the engine then names the one that applies.
   back. `/boot/efi` is left out because on the lab's machines it is the
   Windows disk's EFI partition: a restore must not rewrite Windows' boot
   files.
+- **Holds apt's lock while it snapshots or restores,** so the automatic
+  updates cannot change packages in the middle. It also writes the snapshot
+  to disk before the upgrade starts.
 - **Waits after a cut-off.** If the machine goes down mid-upgrade, the boot
   after does not restore by itself. Running the same command again offers the
   restore; `--cancel` leaves the machine as it is.

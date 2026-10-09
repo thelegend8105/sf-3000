@@ -84,6 +84,18 @@ APT_UPDATE = {
                        "'in.old-releases.ubuntu.com'\n"
                        "W: Some index files failed to download. They have been "
                        "ignored, or old ones used instead.\n"),
+    # Machine 1 as it really is: both at once. Once one source fails hard, apt
+    # prints no "Failed to fetch" line for any source (apt-pkg/update.cc,
+    # 2.5.3), so the dead mirror is named on its Err: line alone.
+    "both": (100, "Err:1 http://in.old-releases.ubuntu.com/ubuntu kinetic InRelease\n"
+                  "  Could not resolve 'in.old-releases.ubuntu.com'\n"
+                  "Err:6 https://pkg.cloudflareclient.com kinetic Release\n"
+                  "  404  Not Found [IP: 104.18.0.1 443]\n"
+                  "Reading package lists...\n"
+                  "E: The repository 'https://pkg.cloudflareclient.com "
+                  "kinetic Release' does not have a Release file.\n"
+                  "N: Updating from such a repository can't be done "
+                  "securely, and is therefore disabled by default.\n"),
     "locked": (100, "E: Could not get lock /var/lib/apt/lists/lock. It is held "
                     "by process 1234 (apt-get)\n"),
     "timeout": (None, "Get:1 http://old-releases.ubuntu.com/ubuntu kinetic InRelease\n"),
@@ -118,6 +130,11 @@ class Sim:
         self.restore_result = "reboots"   # reboots | exit0 | exit1 | abort
         self.create_ok = True
         self.power_cut_on = None   # step key whose command is cut off mid-run
+        self.lock_tries = []       # each try of dpkg's lock: free | busy | cut (empty: free)
+        self.lock_held = False
+        self.under_lock = {}       # snapshot / restore -> was dpkg's lock held then?
+        self.cut_on_sync = False   # a power cut while the snapshot is written out
+        self.apt_tail_bytes = None # how much of apt-get update's output the check read
 
     # --- the machine, as the step checks see it -----------------------------
     def measure(self, pb):
@@ -140,6 +157,7 @@ class Sim:
 
     def fingerprint(self):
         m = self.machine
+        self.events.append("fingerprint (locked)" if self.lock_held else "fingerprint")
         return f"{m['codename']} packages:{m['packages']} markers:{sorted(m['markers'])}"
 
     # --- commands ------------------------------------------------------------
@@ -174,17 +192,21 @@ class Sim:
             return 100, "E: Could not get lock /var/lib/dpkg/lock-frontend\n"
         return 100, "E: Unable to locate package timeshift\n"
 
-    def run_logged(self, cmd, timeout, log_file):
+    def run_logged(self, cmd, timeout, log_file, tail_bytes=8192):
         if isinstance(cmd, list) and "apt-get" in cmd:
+            if "update" in cmd:
+                self.apt_tail_bytes = tail_bytes
             return self.apt_get(cmd)
         if isinstance(cmd, list) and cmd[:2] == ["timeshift", "--create"]:
             self.events.append("snapshot")
+            self.under_lock["snapshot"] = self.lock_held
             if not self.create_ok:
                 return 1, "E: not enough space"
             self.snapshot = copy.deepcopy(self.machine)
             return 0, "Tagged snapshot '2026-10-07_12-00-00': ondemand\n"
         if isinstance(cmd, list) and cmd[:2] == ["timeshift", "--restore"]:
             self.events.append("restore")
+            self.under_lock["restore"] = self.lock_held
             if self.restore_result == "exit1":
                 return 1, "E: rsync failed"
             if self.restore_result == "abort":
@@ -239,6 +261,27 @@ class Sim:
         self.events.append("ask")
         return self.ask_answer
 
+    def try_lock(self):
+        result = self.lock_tries.pop(0) if self.lock_tries else "free"
+        if result == "cut":
+            raise Rebooted()
+        if result == "busy":
+            self.events.append("lock busy")
+            return None
+        self.events.append("lock")
+        self.lock_held = True
+        return 7
+
+    def release(self, fd):
+        self.events.append("unlock")
+        self.lock_held = False
+
+    def sync(self):
+        if self.cut_on_sync:
+            self.cut_on_sync = False
+            raise Rebooted()
+        self.events.append("sync")
+
     # --- install the stubs ---------------------------------------------------
     def __enter__(self):
         self.saved = {n: getattr(runner, n) for n in (
@@ -246,6 +289,7 @@ class Sim:
             "systemd_running", "timeshift_installed", "snapshot_devices",
             "machine_fingerprint", "service_active", "confirm_procedure", "read_cmd",
             "apt_available", "ask_yes", "yaml", "Draft7Validator",
+            "try_package_manager_lock", "release_package_manager", "sync_disks",
             "PROCEDURE_STATE_DIR", "PROCEDURE_LOG_DIR", "PROCEDURE_UNIT_PATH",
             "TIMESHIFT_CONF", "time", "BLOCKED_RETRIES")}
         runner.assess = self.assess
@@ -262,6 +306,9 @@ class Sim:
         runner.read_cmd = lambda *a: ""
         runner.apt_available = lambda: self.apt
         runner.ask_yes = self.ask
+        runner.try_package_manager_lock = self.try_lock
+        runner.release_package_manager = self.release
+        runner.sync_disks = self.sync
         runner.PROCEDURE_STATE_DIR = self.td / "var-lib-sf3000"
         runner.PROCEDURE_LOG_DIR = self.td / "var-log-sf3000"
         runner.PROCEDURE_UNIT_PATH = self.td / runner.PROCEDURE_UNIT
@@ -288,6 +335,7 @@ class Sim:
         boots = 0
         while boots < limit:
             boots += 1
+            self.lock_held = False         # a reboot frees every lock
             before = len(self.events)
             out = io.StringIO()
             try:
@@ -321,7 +369,8 @@ class Sim:
         return [(r.get("step_id"), r["outcome"]) for r in self.records()]
 
     def ran(self):
-        return [e for e in self.events if not e.startswith(("systemctl", "sleep"))]
+        return [e for e in self.events if not e.startswith(
+            ("systemctl", "sleep", "lock", "unlock", "sync", "fingerprint"))]
 
 
 def staged(sim):
@@ -420,6 +469,38 @@ with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
     check("an unreachable mirror is named on one line, its summary's",
           (len(named), named[0].startswith("W: Failed to fetch"),
            "Some index files" in sim.output), (1, True, False))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.apt_updates = ["both"]
+    check("a dead mirror and a repository with no 22.10 at once -> 9", sim.start(), 9)
+    check("  both are named, though apt's own summary names only one",
+          ("pkg.cloudflareclient.com" in sim.output, "in.old-releases.ubuntu.com" in sim.output,
+           "Could not resolve" in sim.output), (True, True, True))
+    check("  the check read all of apt's output, not only its end",
+          sim.apt_tail_bytes, runner.APT_CHECK_OUTPUT)
+# The shape of Run D's output on the 22.10 VM (2026-10-09), which named only
+# the missing suite.
+RUN_D = ("Hit:1 http://old-releases.ubuntu.com/ubuntu kinetic InRelease\n"
+         "Err:5 http://sf3000-no-such-host.invalid/ubuntu kinetic InRelease\n"
+         "  Temporary failure resolving 'sf3000-no-such-host.invalid'\n"
+         "Ign:6 http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite InRelease\n"
+         "Err:7 http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite Release\n"
+         "  404  Not Found [IP: 185.125.190.37 80]\n"
+         "Reading package lists...\n"
+         "E: The repository 'http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite "
+         "Release' does not have a Release file.\n")
+check("Run D's output: each dead source named once",
+      runner.apt_problems(RUN_D),
+      ["E: The repository 'http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite "
+       "Release' does not have a Release file.",
+       "Err:5 http://sf3000-no-such-host.invalid/ubuntu kinetic InRelease  "
+       "Temporary failure resolving 'sf3000-no-such-host.invalid'"])
+check("a summary for kinetic-updates does not stand in for kinetic's Err: line",
+      len(runner.apt_problems(
+          "Err:1 http://h.example/ubuntu kinetic InRelease\n  Could not resolve 'h.example'\n"
+          "W: Failed to fetch http://h.example/ubuntu/dists/kinetic-updates/InRelease  "
+          "Could not resolve 'h.example'\n")), 2)
+check("a clean update: nothing to name",
+      runner.apt_problems(APT_UPDATE["ok"][1] + APT_UPDATE["dupes"][1]), [])
 with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
     runner.BLOCKED_RETRIES = 3
     sim.apt_updates = ["locked", "dupes"]
@@ -741,6 +822,73 @@ with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
     sim.boot_until_stopped()
     check("a boot mid-snapshot: stops, no step ran",
           (sim.state()["phase"], [e for e in sim.events if e.startswith("run:")]), ("failed", []))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.create_ok = False
+    sim.start()
+    sim.boot_until_stopped()
+    check("no snapshot: nothing written to disk, the lock let go",
+          ("sync" in sim.events, sim.lock_held), (False, False))
+
+print("\napt's lock: held from the fingerprint to the end of the snapshot, and through the restore")
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.step_results["three"] = ["timeout"]
+    sim.start(FIXTURE, FIXTURE_PATH)
+    sim.boot_until_stopped()
+    check("records: one, two healed; three restored", sim.outcomes(),
+          [("one", "healed"), ("two", "healed"), ("three", "rolled_back")])
+    order = [e for e in sim.events if e in ("lock", "unlock", "fingerprint", "fingerprint (locked)",
+                                            "snapshot", "sync", "run:one")][:6]
+    check("lock, fingerprint, snapshot, written to disk, unlock, then step one", order,
+          ["lock", "fingerprint (locked)", "snapshot", "sync", "unlock", "run:one"])
+    i = sim.events.index("restore")
+    check("the restore ran holding the lock, and kept it into the reboot",
+          (sim.under_lock, sim.events[i - 1], "unlock" in sim.events[i:]),
+          ({"snapshot": True, "restore": True}, "lock", False))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.lock_tries = ["busy", "busy"]
+    sim.start()
+    sim.boot_until_stopped()
+    check("taken by another program twice: waited twice, then the snapshot and the upgrade",
+          (sim.events.count("lock busy"), sim.events.count(f"sleep {runner.BLOCKED_WAIT}"),
+           sim.outcomes()), (2, 2, [("to-23.04", "healed")]))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    runner.BLOCKED_RETRIES = 3
+    sim.lock_tries = ["busy"] * 3
+    sim.start()
+    sim.boot_until_stopped()
+    r = sim.records()[0]
+    check("never free: no snapshot and no step, recorded as blocked",
+          (r["step_id"], r["outcome"], "snapshot" in sim.events,
+           [e for e in sim.events if e.startswith("run:")]), ("snapshot", "blocked", False, []))
+    check("  state failed, says to start again later; service removed",
+          (sim.state()["phase"], "Start the procedure again later" in sim.state()["stopped_because"],
+           runner.PROCEDURE_UNIT_PATH.exists()), ("failed", True, False))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    runner.BLOCKED_RETRIES = 3
+    sim.step_results["lunar"] = ["fail"]
+    sim.lock_tries = ["free"] + ["busy"] * 3
+    sim.start()
+    sim.boot_until_stopped()
+    r = sim.records()[0]
+    check("never free for the restore: not started, rollback_failed, snapshot untouched",
+          (r["outcome"], r["rollback_result"].startswith("not started"), "restore" in sim.events),
+          ("rollback_failed", True, False))
+    check("  says to restore it by hand", "restore it with Timeshift by hand"
+          in sim.state()["stopped_because"], True)
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.step_results["lunar"] = ["fail"]
+    sim.lock_tries = ["free", "cut"]
+    sim.start()
+    sim.boot_until_stopped()
+    check("a power cut while waiting to restore: nothing restored, held for a person",
+          (sim.state()["phase"], "restore" in sim.events, sim.records()), ("cut_off", False, []))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.cut_on_sync = True
+    sim.start()
+    sim.boot_until_stopped()
+    check("a power cut while the snapshot is written to disk: stops, no step ran",
+          (sim.state()["phase"], "snapshot was being taken" in sim.state()["stopped_because"],
+           [e for e in sim.events if e.startswith("run:")]), ("failed", True, []))
 
 print("\nThe VM fixture, through the same harness")
 with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
@@ -927,6 +1075,10 @@ with tempfile.TemporaryDirectory() as td:
     check("second attempt: its own failure, no lock message from the first",
           (code, "a real failure" in tail, runner.is_lock_contention(tail)), (3, True, False))
     check("the file still keeps both", log.read_text(encoding="utf-8").count("running:"), 2)
+    code, tail = runner.run_logged([sys.executable, "-c", "print('x' * 20000)"], 60, log)
+    check("a long output: the last 8 KB by default", len(tail), 8192)
+    code, tail = runner.run_logged([sys.executable, "-c", "print('x' * 20000)"], 60, log, 1 << 20)
+    check("  all of it when asked", tail.count("x"), 20000)
 
 if FAILURES:
     print(f"\n{len(FAILURES)} check(s) FAILED")

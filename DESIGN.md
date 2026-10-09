@@ -255,6 +255,9 @@ distro.
     only with apt, and only after a y.
   - Its snapshot leaves out `/boot/efi`, which on a dual-boot machine holds
     Windows' boot files too.
+  - While it takes its snapshot or restores it, it holds dpkg's lock, so
+    nothing can change packages in the middle. The snapshot is written to
+    disk before step 1 starts.
   - A step cut off by a crash or a power-off is never re-run by itself.
     Nor is it restored at a boot nobody may be watching: the engine waits
     for the person, who chooses between restoring and leaving the machine
@@ -865,9 +868,53 @@ gives Timeshift no input, so each question takes its default, and
 `--grub-device` makes reinstalling GRUB the default. 25.12.4 skips the
 questions under `--scripted`, with the same defaults.
 
+**2026-10-09 — The apt check names every dead source.** Run D on the 22.10 VM
+added two dead sources, and the engine refused, as it should. But it named
+only one. Once one source fails hard, such as a suite with no Release file,
+apt prints no "Failed to fetch" line for any source (`apt-pkg/update.cc`,
+2.5.3). A host that cannot be reached is then named only on its `Err:` line.
+The engine kept only the summary lines, so it left that host out. It now also
+keeps each `Err:` line, with its reason, whose source no summary line names.
+It also reads all of apt's output, not just the last 8 KB. Lab machine 1 has
+exactly this mix: a mirror that does not exist, and a repository with no 22.10.
+
+**2026-10-09 — The engine holds dpkg's lock while it snapshots or restores.**
+After a restore, the engine compares the machine with a fingerprint of its
+packages, taken just before the snapshot. If unattended-upgrades, the Software
+Updater or a person's apt changed packages in between, or during the restore,
+a good restore would fail its check, or the copy would hold a half-installed
+package. All of them take dpkg's frontend lock before they change anything.
+So the engine takes it too, as apt does (fcntl), and holds it twice:
+
+- from the fingerprint to the end of the snapshot
+- from just before the restore until the reboot
+
+If another program holds the lock, the engine waits, as it does for a busy
+step: up to 30 tries, a minute apart. If it is still busy before the
+snapshot, nothing has run, and the outcome is `blocked`. If it is still busy
+before the restore, the outcome is `rollback_failed`, and the snapshot is
+left untouched for a restore by hand.
+
+The engine takes the lock before the phase says RESTORING. So a machine that
+goes down while waiting for it counts as a cut-off, held for a person, not as
+a restore to check. On the 22.10 VM, the automatic updates were switched off
+for the runs instead. `repos-fixed` and the lab's machines have them on.
+
+**2026-10-09 — The snapshot is written to disk before step 1.** Timeshift does
+not flush its copy when it finishes (read in 22.06.5), and neither did the
+engine. So for half a minute or so, part of a new snapshot could exist only in
+memory. A power cut then would leave a damaged copy for a restore to put back.
+The engine now runs `sync` after the snapshot, and the phase stays SNAPSHOTTING
+until `sync` returns. A power cut before then stops the procedure, with no step
+run.
+
 ---
 
-*Last updated: revision 19 — recorded the procedure runs on the 22.10 VM
+*Last updated: revision 20 — the apt check names every dead source; dpkg's
+lock is held around the snapshot and the restore; the snapshot is synced to
+disk before step 1 (2026-10-09). Built and passing offline on Python 3.12 and
+3.10, not yet run on the VM; §10 and §16 updated.
+Revision 19 — recorded the procedure runs on the 22.10 VM
 (2026-10-08 and 2026-10-09, Runs A to D, all passed); §12 and §13 updated.
 Revision 18 — the snapshot command drops `--tags O`, which
 Timeshift 22.06.5 to 24.01.1 refuse; found when Run B's snapshot failed on
