@@ -8,7 +8,8 @@ the lock held by another program first (below). Its records are in
 `evidence/ubuntu-22.10-2026-10-10.jsonl`. `test_procedure.py` passes
 offline too (stubbed machine, no VM; on Python 3.12 and 3.10). These runs
 prove the same machinery on a real machine, with fixtures that take minutes,
-before any real upgrade relies on it.
+before any real upgrade relies on it. Runs E and F, at the end, fail a real
+upgrade on purpose. They have not run yet.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -209,3 +210,89 @@ Things to know when reading the output:
 After these runs comes the upgrade itself: the four procedures in
 `candidates/procedures/`, one at a time, from `repos-fixed` with
 `--take-snapshot`. Their README has the order.
+
+## Runs E and F: a real upgrade that fails
+
+Runs A to D fail a test step, on a machine the step has not really changed.
+E and F fail a real upgrade: `release-upgrade-to-26.04`, on the 22.10 VM once
+visits 1 to 3 have brought it to 24.04. `fill-disk.py` fills the root disk
+at the moment each run needs. Not run yet.
+
+| Run | what it proves |
+|-----|----------------|
+| E | The upgrader refuses: too little space, found before its download. It installs nothing and exits 1, and the engine restores its snapshot. |
+| F | The disk fills up during the install, and dpkg fails partway. The engine frees its reserve, restores a half-upgraded machine, and checks that it is back. |
+
+Both should end `rolled_back`, with the machine back on 24.04 as it was.
+
+The upgrader measures free space as an ordinary user sees it. On ext4, root
+can use a further 5% that users cannot. E fills only what users see, so the
+upgrader refuses while the engine and Timeshift still have room. F fills it
+all, for root too.
+
+```bash
+# 0. Setup. Room first: delete visit 3's Timeshift snapshot.
+cd ~/sf-3000 && git pull && git log --oneline -1
+python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed
+sudo timeshift --list                 # visit 3's: 2026-10-10_14-28-46
+sudo timeshift --delete --snapshot 2026-10-10_14-28-46 --scripted
+# Then a VirtualBox snapshot, to go back to if F breaks the VM:
+sudo poweroff
+#   (Windows) E:\VirtualBox\VBoxManage.exe snapshot KineticServer take at-24.04
+#   Start the VM again and ssh back in.
+
+# --- Run E: the upgrader refuses --------------------------------------------
+# Second session first; it waits:
+sudo python3 tests/procedure-proof/fill-disk.py before-check
+# First session:
+sudo python3 engine/runner.py --procedures candidates/procedures --run release-upgrade-to-26.04 --take-snapshot
+# Answer y. The second session prints "filled ... MB" once to-26.04 starts.
+journalctl -fu sf3000-procedure
+#   "to-26.04: ... running", then within minutes "its command failed (exit 1)",
+#   "freed the engine's 256 MB reserve", "restoring Timeshift snapshot ...".
+# After the reboot:
+python3 engine/runner.py --status     # stopped: ... Restored Timeshift snapshot <name>
+grep -m1 "Not enough free disk space" /var/log/dist-upgrade/main.log
+ls /var/tmp/sf3000-fill               # No such file: the restore deleted it
+grep VERSION= /etc/os-release         # 24.04
+
+# --- Run F: the disk fills during the install ---------------------------------
+sudo python3 tests/procedure-proof/fill-disk.py mid-install    # second session
+sudo python3 engine/runner.py --procedures candidates/procedures --run release-upgrade-to-26.04 --take-snapshot
+# Answer y. The upgrader downloads for about 10 minutes, then installs.
+# A minute into the install the second session prints "filled ... MB", and
+# dpkg starts to fail. Then, as in E: exit 1, the reserve freed, the restore,
+# and a reboot. After it:
+python3 engine/runner.py --status     # stopped: ... Restored Timeshift snapshot <name>
+grep VERSION= /etc/os-release; sudo dpkg --audit   # 24.04, and nothing from dpkg
+ls /var/tmp/sf3000-fill               # No such file
+
+# --- Copy the logs off (on Windows, from the repo) --------------------------
+#   scp -r -P 2223 rht@127.0.0.1:/var/log/sf3000 logs/kinetic-runs-e-f
+#   and /var/log/dist-upgrade the same way as after each visit.
+```
+
+Expected new records, after visit 3's four:
+
+| Run | step | outcome | what else to check |
+|-----|------|---------|--------------------|
+| E | to-26.04 | `rolled_back` | `failure: fix_failed`, `fix_exit_code: 1`, `rollback_result: "ok: back to 24.04 packages:..."` |
+| F | to-26.04 | `rolled_back` | the same, from a half-upgraded machine |
+
+If updates were waiting, each run first records `updates` as `healed`. The
+restore then undoes them too, since the snapshot came before step 1.
+
+If F ends `rollback_failed`, or the VM does not come back, copy what logs you
+can. Then power the VM off and go back:
+`E:\VirtualBox\VBoxManage.exe snapshot KineticServer restore at-24.04`.
+
+Things to know:
+
+- **F's logs may stop short.** When the disk fills, the step's log and the
+  upgrader's logs are on the full disk too. Their last lines may be missing.
+  The engine's record is written after it frees its reserve.
+- **E's upgrader stops before it downloads.** Its `main.log` ends with "Not
+  enough free disk space" and "view.abort called". It puts the old apt
+  sources back before it exits.
+- **After F, the machine has been restored twice.** Visit 4 can then run on
+  it as it is, which is what a lab machine would do after a failed visit.

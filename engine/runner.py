@@ -578,6 +578,13 @@ PROCEDURE_UNIT_PATH = Path("/etc/systemd/system") / PROCEDURE_UNIT
 SYSTEM_PYTHON = "/usr/bin/python3"   # the interpreter that survives an upgrade
 BLOCKED_RETRIES = 30                 # boot-time apt jobs can hold the lock a while
 BLOCKED_WAIT = 60
+# Set aside in the state directory while a procedure runs, and freed first
+# when a step fails. A step that fails because the disk filled up leaves no
+# room for anything, and the engine writes its state before it starts the
+# restore: on a full disk that write would fail, and nothing would be
+# restored. Freeing this first leaves room for the state, and for Timeshift
+# to start. The snapshot leaves the state directory out, so it is not copied.
+RESERVE_BYTES = 256 * 1024 * 1024
 
 TIMESHIFT_CONF = Path("/etc/timeshift/timeshift.json")
 SNAPSHOT_TIMEOUT = 2 * 3600
@@ -696,6 +703,34 @@ def procedure_log_path() -> Path:
     # Never the clone's logs/: the service writes as root at boot, and a path
     # inside a user's home is a path that user can point somewhere else.
     return PROCEDURE_LOG_DIR / "runs.jsonl"
+
+
+def reserve_path() -> Path:
+    return PROCEDURE_STATE_DIR / "reserve"
+
+
+def make_reserve():
+    """Set RESERVE_BYTES aside: real blocks (posix_fallocate), not a sparse
+    file, so that deleting it really frees them."""
+    fd = os.open(reserve_path(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                 | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        if hasattr(os, "posix_fallocate"):
+            os.posix_fallocate(fd, 0, RESERVE_BYTES)
+        else:                  # not Linux: only the offline tests come here
+            os.ftruncate(fd, RESERVE_BYTES)
+    finally:
+        os.close(fd)
+
+
+def release_reserve() -> bool:
+    """Free the reserve; True if there was one. Never raises: it runs first on
+    the paths where the disk may be full."""
+    try:
+        reserve_path().unlink()
+        return True
+    except OSError:
+        return False
 
 
 def now_utc() -> str:
@@ -1241,6 +1276,7 @@ def verify_step(step: dict, record: dict) -> str:
 
 
 def stop_procedure(state: dict, phase: str, reason: str):
+    release_reserve()
     state["phase"] = phase
     state["stopped_because"] = reason
     state["finished"] = now_utc()
@@ -1260,6 +1296,11 @@ def stop_procedure(state: dict, phase: str, reason: str):
 def fail_step(state: dict, record: dict, failure: str, reason: str, changed=True):
     """A step did not succeed. Undo it with the engine's snapshot when there is
     one and the step may have changed something; otherwise stop."""
+    # Before anything is written: the step may have failed because the disk
+    # is full, and then the state written below could not be.
+    if release_reserve():
+        print(f"  {MARK['arrow']} freed the engine's {RESERVE_BYTES >> 20} MB "
+              "reserve, so there is room to record this and restore", flush=True)
     record["failure"] = failure
     snap = state.get("engine_snapshot")
     if changed and snap and snap.get("name"):
@@ -1354,6 +1395,7 @@ def hold_cut_off(state: dict, record: dict) -> int:
     cut-off, removes its service and waits. The next --run offers the restore
     (offer_undo); --cancel leaves the machine as it is. The step's record is
     written when one of them decides its outcome."""
+    release_reserve()        # the restore, if the person asks for one, needs room
     record["failure"] = INTERRUPTED
     state.update(phase=CUT_OFF, record=record, cut_off_seen=now_utc(),
                  stopped_because=(f"step {record['step_id']}: the machine went "
@@ -1423,6 +1465,7 @@ def resume_procedure() -> int:
     state = read_state()
     if state is None or state["phase"] in FINISHED:
         print("No procedure in progress. Removing the service.", flush=True)
+        release_reserve()
         remove_service()
         return 0
     proc = json.loads((PROCEDURE_STATE_DIR / "procedure.json").read_text(encoding="utf-8"))
@@ -1594,6 +1637,7 @@ def resume_procedure() -> int:
         state.update(step=state["step"] + 1, phase=PENDING, record=None)
         write_state(state)
 
+    release_reserve()
     state.update(phase=DONE, record=None, finished=now_utc())
     write_state(state)
     remove_service()
@@ -1761,6 +1805,16 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
         print(f"  {MARK['HEALTHY']} installed {', '.join(install)}", flush=True)
 
     stage_procedure(proc, proc_path)
+    try:
+        make_reserve()
+    except OSError as e:
+        release_reserve()
+        print(f"{proc['id']}: could not set aside {RESERVE_BYTES >> 20} MB in "
+              f"{PROCEDURE_STATE_DIR} ({e.strerror or e}). The engine keeps that "
+              "much free while a procedure runs, so that it can still restore "
+              "if the disk fills up. Free some space and run this again. No "
+              "step was run.")
+        return 10
     write_state({
         "procedure_id": proc["id"],
         "description": proc["description"],
@@ -1848,6 +1902,7 @@ def cancel_procedure() -> int:
     state = read_state()
     if state is None or state["phase"] in FINISHED:
         print("No procedure in progress.")
+        release_reserve()
         remove_service()
         return 0
     if service_active():
@@ -1917,7 +1972,9 @@ def main():
         try:
             resume_procedure()
         except Exception as e:
-            # Never leave a broken service to retry at every boot.
+            # Never leave a broken service to retry at every boot. First free
+            # the reserve: what failed may have been a write to a full disk.
+            release_reserve()
             print(f"{MARK['ERROR']} the engine itself failed: {e!r}", flush=True)
             traceback.print_exc()
             try:

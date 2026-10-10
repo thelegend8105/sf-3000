@@ -107,7 +107,9 @@ The snapshot leaves out `/home`. It also leaves out `/boot/efi`: on a
 dual-boot machine that is Windows' EFI partition too, and a restore must not
 rewrite Windows' boot files. And it leaves out the release upgrader's logs,
 `/var/log/dist-upgrade`, so after a failed upgrade is restored, its logs
-still say why it failed. If the machine goes down in the middle of a
+still say why it failed. While a procedure runs, the engine keeps 256 MB of
+the disk set aside, and frees it first if a step fails. If the disk filled
+up, that leaves room to record the failure and restore. If the machine goes down in the middle of a
 step, the boot after restores nothing: it may be a boot nobody is watching.
 Running the same command again offers the restore, and `--cancel` leaves the
 machine as it is. `--snapshot <name>` records a snapshot you took yourself

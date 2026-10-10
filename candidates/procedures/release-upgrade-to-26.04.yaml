@@ -9,6 +9,14 @@
 # From 24.04 the next supported release is 26.04 (LTS to LTS), so this is an
 # ordinary do-release-upgrade. Until 2026-10-08 this id named all four
 # upgrades in one procedure; now it is only the last.
+#
+# Two steps, with a reboot between them. do-release-upgrade quits before it
+# starts if any update is still to install, and also if a kernel, linux-base
+# or libc6 update waits for a reboot (read in its source, noble). 24.04 still
+# gets updates, so a visit days after the last one usually finds some, a new
+# kernel among them. Installing them and upgrading in one step would then
+# refuse every time, and every retry the same way. So step 1 installs them
+# and reboots, and step 2 upgrades. With nothing waiting, step 1 is skipped.
 id: release-upgrade-to-26.04
 description: Upgrade an Ubuntu 24.04 LTS machine in place to 26.04 LTS, the next release (visit 4 of 4)
 symptoms:
@@ -22,6 +30,38 @@ requires_privilege: true
 reverse:
   strategy: snapshot_only   # the way back is a snapshot: --take-snapshot, or one you name
 steps:
+  - id: updates
+    description: Install 24.04's waiting updates, then reboot, so that the upgrade finds none waiting
+    requires:
+      detect:
+        command: '. /etc/os-release && echo "$VERSION_CODENAME"'
+        produces: string
+      expect:
+        predicate: equals
+        value: noble
+    # What full-upgrade would install, plus 1 if a kernel, linux-base or libc6
+    # update waits for a reboot: the two things do-release-upgrade refuses on.
+    # Read-only: -s only simulates, and the empty cache paths stop apt from
+    # rewriting its cache files. If apt fails it prints nothing, so the check
+    # errors rather than reading 0.
+    detect:
+      command: |-
+        out=$(apt-get -s -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= full-upgrade 2>/dev/null) || exit 1
+        n=$(printf '%s\n' "$out" | grep -c '^Inst ')
+        if grep -qsxE 'libc6|linux-base|linux-image-.*' /var/run/reboot-required.pkgs; then n=$((n + 1)); fi
+        echo "$n"
+      produces: integer
+    expect:
+      predicate: equals
+      value: 0
+    run:
+      ubuntu: |-
+        set -e
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
+        apt-get update
+        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
+    timeout_minutes: 120
+    reboot_after: true
   - id: to-26.04
     description: 24.04 LTS to 26.04 LTS (do-release-upgrade)
     requires:
@@ -39,13 +79,13 @@ steps:
     expect:
       predicate: greater_than
       value: 2603
+    # No apt-get update here: do-release-upgrade judges "nothing left to
+    # install" from apt's lists, and these are the lists step 1 installed from.
     run:
       ubuntu: |-
         set -e
         export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 RELEASE_UPGRADER_NO_SCREEN=1
-        apt-get update
-        apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade
         do-release-upgrade -f DistUpgradeViewNonInteractive
     timeout_minutes: 360
     reboot_after: true
-source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Never run. Planned: tests/procedure-proof/ on the 22.10 VM first, then the four in order from its repos-fixed snapshot with --take-snapshot."
+source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. On 2026-10-10 split again into two steps, updates and a reboot first, because do-release-upgrade (noble) refuses while a kernel or libc6 update waits for a reboot. Never run."

@@ -259,6 +259,8 @@ distro.
   - While it takes its snapshot or restores it, it holds dpkg's lock, so
     nothing can change packages in the middle. The snapshot is written to
     disk before step 1 starts.
+  - It keeps 256 MB set aside while it runs, and frees it first when a step
+    fails, so that a full disk cannot stop the restore.
   - A step cut off by a crash or a power-off is never re-run by itself.
     Nor is it restored at a boot nobody may be watching: the engine waits
     for the person, who chooses between restoring and leaving the machine
@@ -464,9 +466,11 @@ removed 3.10; the engine still reached its reboot. The records are in
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, `--cancel` after a cut-off, and a wait for
 dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
-has the last upgrade procedure. And no real upgrade has failed yet: every
-restore so far undid a test step on a machine that had not really changed.
-A restore from a half-upgraded machine has not been seen.
+has the last upgrade procedure, now two steps (§16). And no real upgrade has
+failed yet: every restore so far undid a test step on a machine that had not
+really changed. A restore from a half-upgraded machine has not been seen, nor
+the reserve that lets the engine restore on a full disk (§16). Runs E and F
+in `tests/procedure-proof/` are written for both.
 
 ---
 
@@ -982,9 +986,64 @@ folder, has dpkg's output during the upgrade.
 *Seen on 2026-10-10:* visit 2's upgrader moved visit 1's logs into a dated
 folder, as expected. No restore has tested the exclude yet.
 
+**2026-10-10 — The engine keeps a reserve on the disk while a procedure
+runs.** Before it starts a restore, the engine writes its state: the phase
+that tells the boot after to check the restore. A step that fails because the
+disk filled up leaves no room for that write. The write then fails, the
+engine's catch-all stops the procedure with "the machine needs a person", and
+nothing is restored: the case the snapshot exists for. Read in the code after
+the person running the VM asked what a full disk would do.
+
+So after the y the engine sets aside 256 MB in its state directory (real
+blocks, `posix_fallocate`). When a step fails, it frees them before it writes
+anything. That leaves room for the state, and for Timeshift to start. The
+restore then deletes what the upgrade added, which frees more. The file is
+also freed whenever the procedure stops or finishes, and when a step is cut
+off. The state directory is left out of the snapshot, so the reserve is never
+copied. If even 256 MB cannot be set aside, `--run` refuses with exit 10 and
+runs no step.
+
+*Why not check the space up front instead:* the upgrader already checks what
+it needs, and refuses before it downloads anything; Timeshift checks for its
+snapshot. What neither covers is a disk that fills anyway, after those
+checks. *Why 256 MB:* the state is a few kilobytes. Timeshift's log and
+rsync's copy of one file at a time need more, and on the lab's machines, with
+about 820 GB free, 256 MB costs nothing. Offline, a step that fills the disk
+now ends `rolled_back`, and with the early free removed the same test fails
+with "No space left on device". Not yet run on a VM: Run F in
+`tests/procedure-proof/` does that.
+
+**2026-10-10 — The 26.04 upgrade installs waiting updates and reboots
+first.** `do-release-upgrade` quits with exit 1, before it changes anything,
+if any update is still to install. It also quits if
+`/var/run/reboot-required.pkgs` lists a kernel, `linux-base` or `libc6`
+(read in its source, mantic and noble). The upgrade steps run `full-upgrade`
+just before it. On 24.04, which still gets updates, a lab visit days after
+the last one would usually install a new kernel there, and the upgrade would
+then refuse. The engine would restore, and every retry would refuse the same
+way.
+
+So `release-upgrade-to-26.04` is now two steps. `updates` runs `apt-get
+update` and `full-upgrade`, then reboots. Its check counts what `full-upgrade`
+would still install (`apt-get -s`, with apt's cache files switched off so
+that it writes nothing), plus one if such a reboot is waiting. `to-26.04`
+then runs `do-release-upgrade` alone, with no `apt-get update`, so it judges
+"nothing left to install" from the same lists step 1 used. With nothing
+waiting, step 1 counts as done and is skipped. Both steps require 24.04, so
+step 1 never installs updates on another release. The 24.04 upgrade stays one
+step: 23.10 gets no updates any more, so its `full-upgrade` installs nothing.
+A held package still makes `do-release-upgrade` refuse, so the procedures
+README says to check for one first. Offline: built and passing; not yet run
+on a VM.
+
 ---
 
-*Last updated: revision 25 — the third upgrade, 23.10 to 24.04, healed on
+*Last updated: revision 26 — a 256 MB reserve, freed first when a step
+fails, so the engine can still restore on a full disk; the 26.04 upgrade
+split into updates and a reboot, then the upgrade (2026-10-10). Built and
+passing offline on Python 3.12 and 3.10, not yet run on a VM; §13 and §16
+updated.
+Revision 25 — the third upgrade, 23.10 to 24.04, healed on
 the same VM in 27 minutes, and apt left old-releases by itself (2026-10-10);
 §12 and §13 updated, and §13 now says no real upgrade has failed yet.
 Revision 24 — the second upgrade, 23.04 to 23.10, healed on

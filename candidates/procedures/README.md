@@ -10,9 +10,10 @@ CANDIDATES, not yet vetted. Together they move a machine from Ubuntu 22.10
 | 3     | `release-upgrade-to-24.04` | 23.10 mantic | 24.04 noble  |
 | 4     | `release-upgrade-to-26.04` | 24.04 noble  | 26.04 resolute |
 
-Each is one upgrade, then a reboot, then the check. It runs with the person
-there, in a lab slot of 2 to 2.5 hours, and the engine stops when the check
-passes. Ubuntu cannot skip a release, so 23.x is two visits. 24.04 is a
+Each is one upgrade, then a reboot, then the check. Visit 4 first installs
+24.04's waiting updates and reboots, because its upgrade refuses otherwise
+(below). Each runs with the person there, in a lab slot of 2 to 2.5 hours,
+and the engine stops when the check passes. Ubuntu cannot skip a release, so 23.x is two visits. 24.04 is a
 good place to pause: it is supported until 2029.
 
 **Visits 1 to 3 healed on the 22.10 VM on 2026-10-10**, one after the
@@ -49,6 +50,9 @@ upgrades from, and the engine then names the one that applies.
   failed only to `/var/log/dist-upgrade/main.log`. That folder is left out
   of the snapshot, so after a failed upgrade is restored, the log is still
   there to read.
+- **Keeps room to restore.** While it runs, the engine sets aside 256 MB of
+  the disk. If a step fails, it frees that first, so a disk that filled up
+  during the upgrade still leaves room to record the failure and restore.
 - **Waits after a cut-off.** If the machine goes down mid-upgrade, the boot
   after does not restore by itself. Running the same command again offers the
   restore; `--cancel` leaves the machine as it is.
@@ -125,6 +129,13 @@ So check each machine first. None of these change anything:
 `do-release-upgrade -c` should say "New release ... available",
 `apt-mark showhold` should print nothing, and
 `cat /var/run/reboot-required.pkgs` should find no file.
+
+On 23.10 (visit 3) the last two do not come up by themselves: it gets no
+updates any more. On 24.04 (visit 4) they do. It still gets updates, and the
+lab's visits are days apart, so a new kernel is usually waiting by then. So `release-upgrade-to-26.04` has two
+steps. `updates` installs what waits and reboots; `to-26.04` then runs
+`do-release-upgrade`, with nothing left waiting. With nothing waiting at the
+start, step 1 is skipped.
 
 Its own messages ("Checking for a new Ubuntu release", the signature check)
 reach the step's log only when it fails. When it succeeds, it replaces itself
