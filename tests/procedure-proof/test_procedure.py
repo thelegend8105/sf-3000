@@ -18,6 +18,7 @@ No pytest, like the other offline proofs. Exits non-zero if any check fails.
 import copy
 import json
 import io
+import os
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -53,6 +54,8 @@ FIXTURE_PATH = REPO / "tests" / "procedure-proof" / "procedure-proof.yaml"
 FIXTURE = yaml.safe_load(FIXTURE_PATH.read_text(encoding="utf-8"))
 CUTOFF_PATH = REPO / "tests" / "procedure-proof" / "cut-off-proof.yaml"
 CUTOFF = yaml.safe_load(CUTOFF_PATH.read_text(encoding="utf-8"))
+LEFTOVER_PATH = REPO / "tests" / "procedure-proof" / "leftover-proof.yaml"
+LEFTOVER = yaml.safe_load(LEFTOVER_PATH.read_text(encoding="utf-8"))
 
 RELEASES = {"kinetic": 2210, "lunar": 2304, "mantic": 2310, "noble": 2404,
             "resolute": 2604, "focal": 2004}
@@ -141,6 +144,8 @@ class Sim:
         self.disk_full = False     # a step filled the disk: True, or "hard" if even
                                    # freeing the reserve leaves no room
         self.all_output = ""       # every boot's output, not only the last one's
+        self.leftovers = []        # what a failed step leaves running ("pid name")
+        self.reserve_at_stop = None   # was the reserve still there when they were stopped?
 
     # --- the machine, as the step checks see it -----------------------------
     def measure(self, pb):
@@ -152,7 +157,7 @@ class Sim:
             return m["codename"]
         if "VERSION_ID" in cmd:
             return RELEASES[m["codename"]] if m["dpkg_clean"] else 0
-        for name in ("one", "two", "three", "finished"):
+        for name in ("one", "two", "three", "finished", "left"):
             if f"sf3000-proof/{name}" in cmd:
                 return 1 if name in m["markers"] else 0
         raise AssertionError(f"unknown detect: {cmd}")
@@ -179,6 +184,8 @@ class Sim:
             return "updates"
         if "sf3000-proof/started" in cmd:
             return "long"
+        if "sf3000-proof/left" in cmd:
+            return "leave"
         for name in ("one", "two", "three"):
             if f"sf3000-proof/{name}" in cmd:
                 return name
@@ -320,6 +327,12 @@ class Sim:
         self.events.append("unlock")
         self.lock_held = False
 
+    def stop_leftovers(self):
+        self.events.append("stop leftovers")
+        self.reserve_at_stop = runner.reserve_path().exists()
+        stopped, self.leftovers = self.leftovers, []
+        return stopped
+
     def sync(self):
         if self.cut_on_sync:
             self.cut_on_sync = False
@@ -335,6 +348,7 @@ class Sim:
             "machine_fingerprint", "service_active", "confirm_procedure", "read_cmd",
             "apt_available", "ask_yes", "yaml", "Draft7Validator",
             "try_package_manager_lock", "release_package_manager", "sync_disks",
+            "stop_leftovers",
             "PROCEDURE_STATE_DIR", "PROCEDURE_LOG_DIR", "PROCEDURE_UNIT_PATH",
             "TIMESHIFT_CONF", "time", "BLOCKED_RETRIES", "RESERVE_BYTES",
             "write_state", "log_run", "make_reserve")}
@@ -355,6 +369,7 @@ class Sim:
         runner.try_package_manager_lock = self.try_lock
         runner.release_package_manager = self.release
         runner.sync_disks = self.sync
+        runner.stop_leftovers = self.stop_leftovers
         runner.PROCEDURE_STATE_DIR = self.td / "var-lib-sf3000"
         runner.PROCEDURE_LOG_DIR = self.td / "var-log-sf3000"
         runner.PROCEDURE_UNIT_PATH = self.td / runner.PROCEDURE_UNIT
@@ -422,7 +437,8 @@ class Sim:
 
     def ran(self):
         return [e for e in self.events if not e.startswith(
-            ("systemctl", "sleep", "lock", "unlock", "sync", "fingerprint"))]
+            ("systemctl", "sleep", "lock", "unlock", "sync", "fingerprint",
+             "stop leftovers"))]
 
 
 def staged(sim):
@@ -451,6 +467,7 @@ check("  and its upgrade step updates no lists: it upgrades from step 1's",
       False)
 check("fixture is valid", list(v.iter_errors(FIXTURE)), [])
 check("cut-off fixture is valid", list(v.iter_errors(CUTOFF)), [])
+check("leftover fixture is valid", list(v.iter_errors(LEFTOVER)), [])
 check("playbook schema rejects a procedure",
       bool(list(Draft7Validator(runner.load_schema()).iter_errors(UPGRADE))), True)
 bad = copy.deepcopy(FIXTURE)
@@ -808,6 +825,194 @@ with tempfile.TemporaryDirectory() as td, Sim(td, codename="lunar") as sim:
           ("restore" in sim.events, runner.reserve_path().exists(),
            runner.PROCEDURE_UNIT_PATH.exists(), "engine itself failed" in out.getvalue()),
           (False, False, False, True))
+
+print("\nWhat a failed step left running: stopped before the restore, and before the reserve goes")
+# Run F on the VM (2026-10-10): the upgrader exited while its install process
+# and a dpkg ran on into the restore.
+with tempfile.TemporaryDirectory() as td, Sim(td, codename="lunar") as sim:
+    sim.step_results["mantic"] = ["disk-full"]
+    sim.leftovers = ["2719 python3", "7903 dpkg"]
+    sim.start(*UPGRADES["release-upgrade-to-23.10"])
+    sim.boot_until_stopped()
+    check("stopped after the step, before the restore",
+          [e for e in sim.events if e in ("run:mantic", "stop leftovers", "restore")],
+          ["run:mantic", "stop leftovers", "restore"])
+    check("  while the reserve was still set aside, so the room it frees is the restore's",
+          sim.reserve_at_stop, True)
+    r = sim.records()[0]
+    check("  the record names them, and the restore went on as before",
+          (r["leftovers_stopped"], r["outcome"]),
+          (["2719 python3", "7903 dpkg"], "rolled_back"))
+    check("  it says so", "stopped what the step left running: 2719 python3, 7903 dpkg"
+          in sim.all_output, True)
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.step_results["leave"] = ["fail"]
+    sim.leftovers = ["4321 python3"]
+    sim.start(LEFTOVER, LEFTOVER_PATH)
+    sim.boot_until_stopped()
+    r = sim.records()[0]
+    check("the VM fixture for it (Run G): restored, the leftover named",
+          (sim.ran(), r["step_id"], r["outcome"], r["leftovers_stopped"]),
+          (["apt-get update", "confirm", "snapshot", "run:leave", "restore", "reboot -f"],
+           "leave", "rolled_back", ["4321 python3"]))
+with tempfile.TemporaryDirectory() as td, Sim(td, codename="lunar") as sim:
+    sim.step_results["mantic"] = ["fail-after-change"]
+    sim.start(*UPGRADES["release-upgrade-to-23.10"])
+    sim.boot_until_stopped()
+    check("nothing left running: looked for, none named, nothing said",
+          ("stop leftovers" in sim.events, sim.records()[0]["leftovers_stopped"],
+           "stopped what the step left running" in sim.all_output), (True, None, False))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.step_results["lunar"] = ["timeout"]
+    sim.start()
+    sim.boot_until_stopped()
+    check("a step stopped at its time limit: the same, before its restore",
+          [e for e in sim.events if e in ("stop leftovers", "restore")],
+          ["stop leftovers", "restore"])
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.step_results["lunar"] = ["fail"]
+    sim.leftovers = ["4242 dpkg"]
+    sim.start(snapshot="repos-fixed", take=False)
+    sim.boot_until_stopped()
+    check("no restore to follow (a named snapshot only): left to finish",
+          ("stop leftovers" in sim.events, sim.records()[0]["leftovers_stopped"]),
+          (False, None))
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    runner.BLOCKED_RETRIES = 3
+    sim.step_results["lunar"] = ["locked"] * 3
+    sim.start()
+    sim.boot_until_stopped()
+    check("a step that never started (blocked): nothing stopped",
+          "stop leftovers" in sim.events, False)
+with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
+    sim.start()
+    sim.boot_until_stopped()
+    check("a step that succeeds: nothing stopped, and the record says null",
+          ("stop leftovers" in sim.events, sim.records()[0]["leftovers_stopped"]),
+          (False, None))
+
+print("\nstop_leftovers: only the engine's service, never the engine itself")
+CGROUP_NAMES = ("CGROUP_SELF", "CGROUP_ROOT", "PROC_ROOT", "time")
+SERVICE = f"0::/system.slice/{runner.PROCEDURE_UNIT}\n"
+
+
+def leftover_machine(td, group, pids, names):
+    """Fake /proc and /sys/fs/cgroup in td. Returns the kill() to pass, and
+    the list of pids it was called with. Killing a pid takes it out of the
+    group; a pid listed in `spawns` starts another just before it goes."""
+    root = Path(td)
+    runner.CGROUP_SELF = root / "self-cgroup"
+    runner.CGROUP_ROOT = root / "cgroup"
+    runner.PROC_ROOT = root / "proc"
+    runner.time = SimpleNamespace(sleep=lambda s: None)
+    procs = None
+    if group is not None:
+        runner.CGROUP_SELF.write_text(group)
+    if group and group.startswith("0::"):
+        procs = runner.CGROUP_ROOT / group[3:].strip().lstrip("/") / "cgroup.procs"
+        procs.parent.mkdir(parents=True)
+        procs.write_text("".join(f"{p}\n" for p in pids))
+    for pid, name in names.items():
+        (runner.PROC_ROOT / str(pid)).mkdir(parents=True)
+        (runner.PROC_ROOT / str(pid) / "comm").write_text(name + "\n")
+    killed, spawns, gone = [], {}, set()
+
+    def kill(pid):
+        if pid in gone:
+            raise ProcessLookupError(3, "No such process")
+        killed.append(pid)
+        left = [int(p) for p in procs.read_text().split() if int(p) != pid]
+        left += spawns.get(pid, [])
+        procs.write_text("".join(f"{p}\n" for p in left))
+    kill.spawns, kill.gone = spawns, gone
+    return kill, killed
+
+
+saved_cgroup = {n: getattr(runner, n) for n in CGROUP_NAMES}
+try:
+    me = os.getpid()
+    with tempfile.TemporaryDirectory() as td:
+        kill, killed = leftover_machine(td, SERVICE, [me, 2719, 7903],
+                                        {2719: "python3", 7903: "dpkg", 8000: "dpkg-deb"})
+        kill.spawns[2719] = [8000]
+        stopped = runner.stop_leftovers(kill)
+        check("in the service: every other process stopped, the engine left alone",
+              (sorted(killed), me in killed), ([2719, 7903, 8000], False))
+        check("  one started while stopping is caught on the next look; each named",
+              stopped, ["2719 python3", "7903 dpkg", "8000 dpkg-deb"])
+    with tempfile.TemporaryDirectory() as td:
+        kill, killed = leftover_machine(td, SERVICE, [me, 2719, 5000, 7903], {7903: "dpkg"})
+        kill.gone.add(2719)
+        check("one already gone: not named; one whose name cannot be read: '?'",
+              runner.stop_leftovers(kill), ["5000 ?", "7903 dpkg"])
+    with tempfile.TemporaryDirectory() as td:
+        kill, killed = leftover_machine(td, "0::/user.slice/user-1000.slice/session-3.scope\n",
+                                        [me, 4000], {4000: "bash"})
+        check("in a person's session: nothing stopped", (runner.stop_leftovers(kill), killed),
+              ([], []))
+    with tempfile.TemporaryDirectory() as td:
+        kill, killed = leftover_machine(td, None, [], {})
+        check("no cgroup file (not Linux): nothing stopped", (runner.stop_leftovers(kill), killed),
+              ([], []))
+    with tempfile.TemporaryDirectory() as td:
+        kill, killed = leftover_machine(td, "1:name=systemd:/system.slice/x.service\n", [], {})
+        check("no cgroup v2 line: nothing stopped", (runner.stop_leftovers(kill), killed),
+              ([], []))
+finally:
+    for _n, _v in saved_cgroup.items():
+        setattr(runner, _n, _v)
+
+print("\ndpkg's two locks: the frontend's, then dpkg's own; neither kept if one is busy")
+
+
+class FakeLocks:
+    """os.open/os.close and fcntl.lockf, for try_package_manager_lock only."""
+
+    def __init__(self, busy):
+        self.busy, self.opened, self.locked, self.closed = busy, {}, [], []
+
+    def __getattr__(self, name):                 # everything else is the real os
+        return getattr(os, name)
+
+    def open(self, path, flags, mode=0o777):
+        fd = 100 + len(self.opened)
+        self.opened[fd] = Path(path).name
+        return fd
+
+    def close(self, fd):
+        self.closed.append(self.opened[fd])
+
+    def lockf(self, fd, op):
+        if self.opened[fd] in self.busy:
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+        self.locked.append(self.opened[fd])
+
+
+saved_locks = {n: getattr(runner, n) for n in ("os", "DPKG_FRONTEND_LOCK", "DPKG_LOCK")}
+saved_fcntl = sys.modules.get("fcntl")
+try:
+    with tempfile.TemporaryDirectory() as td:
+        runner.DPKG_FRONTEND_LOCK = Path(td) / "lock-frontend"
+        runner.DPKG_LOCK = Path(td) / "lock"
+        for busy, want in [((), ([100, 101], ["lock-frontend", "lock"], [])),
+                           (("lock",), (None, ["lock-frontend"], ["lock", "lock-frontend"])),
+                           (("lock-frontend",), (None, [], ["lock-frontend"]))]:
+            fake = FakeLocks(busy)
+            runner.os = fake
+            sys.modules["fcntl"] = SimpleNamespace(LOCK_EX=2, LOCK_NB=4, lockf=fake.lockf)
+            got = runner.try_package_manager_lock()
+            check(f"busy: {', '.join(busy) or 'neither'} -> what it returns, what it "
+                  "locked, what it let go", (got, fake.locked, fake.closed), want)
+            if got:
+                runner.release_package_manager(got)
+                check("  letting go closes both", fake.closed, ["lock-frontend", "lock"])
+finally:
+    for _n, _v in saved_locks.items():
+        setattr(runner, _n, _v)
+    if saved_fcntl is None:
+        sys.modules.pop("fcntl", None)
+    else:
+        sys.modules["fcntl"] = saved_fcntl
 
 print("\nThe upgrader exits 0 but nothing changed: caught after the reboot, restored")
 with tempfile.TemporaryDirectory() as td, Sim(td) as sim:

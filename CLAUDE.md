@@ -82,12 +82,15 @@ What takes several files to see:
   restore.
   A restore counts as done only when a fingerprint (the release plus every
   installed package version) matches the one taken before the snapshot.
-  Timeshift's exit code is never trusted. The engine holds dpkg's frontend
-  lock from the fingerprint to the end of the snapshot, and through the
-  restore, and syncs the snapshot to disk before step 1. While a procedure
-  runs, a 256 MB file in the state directory (`make_reserve`) keeps room on
-  the disk. Every failure path frees it before its first write
-  (`release_reserve`), so a full disk cannot stop the restore.
+  Timeshift's exit code is never trusted. The engine holds dpkg's two locks
+  (the frontend's, then dpkg's own) from the fingerprint to the end of the
+  snapshot, and through the restore, and syncs the snapshot to disk before
+  step 1. While a procedure runs, a 256 MB file in the state directory
+  (`make_reserve`) keeps room on the disk. Every failure path frees it before
+  its first write (`release_reserve`), so a full disk cannot stop the
+  restore. Before a restore, and before that free, `fail_step` kills every
+  other process in the service's cgroup (`stop_leftovers`): the release
+  upgrader's install runs in a session of its own and can outlive it.
 - **The offline tests patch `runner`'s module-level names**: functions such
   as `run_command`, `run_logged`, `assess` and `systemctl`, and path
   constants such as `PROCEDURE_STATE_DIR`, pointed at a temp folder.

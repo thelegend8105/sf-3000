@@ -1175,36 +1175,46 @@ def take_snapshot(snap: dict):
 # the Software Updater or a person's apt changed packages in between, or during
 # the restore, that check would fail a good restore, or the copy would hold a
 # half-installed package. All of them take dpkg's frontend lock before they
-# change anything, so the engine holds that lock around the fingerprint and the
-# snapshot, and around the restore.
+# change anything, and dpkg holds its own lock while it runs. So the engine
+# holds both, around the fingerprint and the snapshot, and around the restore.
+# The second one matters when whatever started dpkg is gone and dpkg is not:
+# on the VM (Run F, 2026-10-10) the release upgrader exited while a dpkg it
+# had started was still unpacking.
 
 DPKG_FRONTEND_LOCK = Path("/var/lib/dpkg/lock-frontend")
+DPKG_LOCK = Path("/var/lib/dpkg/lock")
 
 
 def try_package_manager_lock():
-    """One try at dpkg's frontend lock, taken the way apt takes it (fcntl, not
-    flock). Returns the open descriptor that holds it, -1 on a machine with no
-    dpkg, or None while another program holds it."""
+    """One try at dpkg's two locks: the frontend's, then dpkg's own, in the
+    order apt takes them and the way it does (fcntl, not flock). Returns the
+    open descriptors that hold them, -1 on a machine with no dpkg, or None
+    while another program holds either; then neither is kept."""
     if not DPKG_FRONTEND_LOCK.parent.is_dir():
         return -1
     import fcntl   # Linux only, like the rest of the procedure path
-    fd = os.open(DPKG_FRONTEND_LOCK, os.O_RDWR | os.O_CREAT, 0o640)
-    try:
-        fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        os.close(fd)
-        return None
-    return fd
+    held = []
+    for path in (DPKG_FRONTEND_LOCK, DPKG_LOCK):
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o640)
+        try:
+            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            for taken in held:
+                os.close(taken)
+            return None
+        held.append(fd)
+    return held
 
 
 def hold_package_manager(before: str):
-    """Wait for dpkg's frontend lock and keep it. Returns what to hand to
-    release_package_manager(), or None when the lock stayed taken through
+    """Wait for dpkg's locks and keep them. Returns what to hand to
+    release_package_manager(), or None when they stayed taken through
     BLOCKED_RETRIES tries."""
     for attempt in range(1, BLOCKED_RETRIES + 1):
-        fd = try_package_manager_lock()
-        if fd is not None:
-            return fd
+        lock = try_package_manager_lock()
+        if lock is not None:
+            return lock
         if attempt < BLOCKED_RETRIES:
             print(f"  {MARK['arrow']} the package manager is busy — waiting "
                   f"{BLOCKED_WAIT}s before {before} (attempt {attempt + 1} of "
@@ -1213,9 +1223,10 @@ def hold_package_manager(before: str):
     return None
 
 
-def release_package_manager(fd):
-    if fd is not None and fd >= 0:
-        os.close(fd)          # closing the descriptor drops the lock
+def release_package_manager(lock):
+    if isinstance(lock, list):
+        for fd in lock:
+            os.close(fd)      # closing a descriptor drops its lock
 
 
 def sync_disks():
@@ -1225,6 +1236,54 @@ def sync_disks():
     restore to copy back."""
     if hasattr(os, "sync"):
         os.sync()
+
+
+# Where the kernel lists the processes in the engine's service: cgroup v2,
+# which Ubuntu has used since 21.10.
+CGROUP_SELF = Path("/proc/self/cgroup")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+PROC_ROOT = Path("/proc")
+LEFTOVER_ROUNDS = 10
+
+
+def stop_leftovers(kill=None) -> list:
+    """Stop every process still running in the engine's service, other than
+    the engine. Only steps run there, so each one is something a step left
+    behind. The release upgrader installs from a child process in a session
+    of its own, which the step's time limit (a process group) does not reach,
+    and which outlived the upgrader itself on the VM (Run F, 2026-10-10).
+    Returns them as "pid name". Outside the service it does nothing: never a
+    person's own session."""
+    kill = kill or (lambda pid: os.kill(pid, signal.SIGKILL))
+    try:
+        group = next(line[3:] for line in CGROUP_SELF.read_text().splitlines()
+                     if line.startswith("0::"))
+    except (OSError, StopIteration):
+        return []
+    if Path(group).name != PROCEDURE_UNIT:
+        return []
+    procs = CGROUP_ROOT / group.lstrip("/") / "cgroup.procs"
+    stopped, seen = [], {os.getpid()}
+    for _ in range(LEFTOVER_ROUNDS):    # one may start another as it is stopped
+        try:
+            pids = {int(p) for p in procs.read_text().split()} - seen
+        except (OSError, ValueError):
+            break
+        if not pids:
+            break
+        for pid in sorted(pids):
+            try:
+                name = (PROC_ROOT / str(pid) / "comm").read_text().strip()
+            except OSError:
+                name = "?"
+            try:
+                kill(pid)
+            except OSError:             # gone already
+                continue
+            stopped.append(f"{pid} {name}")
+        seen |= pids
+        time.sleep(0.2)
+    return stopped
 
 
 def step_record(state: dict, step: dict, cmd: str) -> dict:
@@ -1255,6 +1314,7 @@ def step_record(state: dict, step: dict, cmd: str) -> dict:
         "outcome": None,
         "rollback_method": None,
         "rollback_result": None,
+        "leftovers_stopped": None,
     }
 
 
@@ -1296,14 +1356,25 @@ def stop_procedure(state: dict, phase: str, reason: str):
 def fail_step(state: dict, record: dict, failure: str, reason: str, changed=True):
     """A step did not succeed. Undo it with the engine's snapshot when there is
     one and the step may have changed something; otherwise stop."""
+    snap = state.get("engine_snapshot")
+    restore = bool(changed and snap and snap.get("name"))
+    if restore:
+        # First stop what the step left running. It would go on changing the
+        # machine during the restore, and could take the room freed below.
+        # With no restore to follow, it is left to finish, for the reason the
+        # service's KillMode=process gives.
+        leftovers = stop_leftovers()
+        if leftovers:
+            record["leftovers_stopped"] = leftovers
+            print(f"  {MARK['arrow']} stopped what the step left running: "
+                  f"{', '.join(leftovers)}", flush=True)
     # Before anything is written: the step may have failed because the disk
     # is full, and then the state written below could not be.
     if release_reserve():
         print(f"  {MARK['arrow']} freed the engine's {RESERVE_BYTES >> 20} MB "
               "reserve, so there is room to record this and restore", flush=True)
     record["failure"] = failure
-    snap = state.get("engine_snapshot")
-    if changed and snap and snap.get("name"):
+    if restore:
         begin_restore(state, record, f"step {record['step_id']}: {reason}")
         return
     record["outcome"] = failure
@@ -1320,8 +1391,8 @@ def begin_restore(state: dict, record: dict, reason: str):
     boot after verifies (resume_procedure, phase RESTORING). The step's record
     is written then, with the restore's result as its outcome.
 
-    dpkg's lock comes first, and only then does the phase say RESTORING. A
-    machine that goes down while the engine waits for the lock has restored
+    dpkg's locks come first, and only then does the phase say RESTORING. A
+    machine that goes down while the engine waits for them has restored
     nothing, and the boot after must not check a restore that never ran."""
     snap = state["engine_snapshot"]
     record["rollback_method"] = "timeshift"
@@ -1350,7 +1421,7 @@ def begin_restore(state: dict, record: dict, reason: str):
     # the check after it. A failed exit may have left a half-copied system;
     # say so and stop rather than reboot into it.
     if code == 0:
-        reboot_machine()      # dpkg's lock goes with this process
+        reboot_machine()      # dpkg's locks go with this process
         return
     release_package_manager(lock)
     record["outcome"] = ROLLBACK_FAILED

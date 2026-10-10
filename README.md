@@ -100,8 +100,9 @@ that cannot be undone needs a snapshot first. `--take-snapshot` has the
 engine take one with Timeshift before step 1, installing Timeshift with apt
 first if it is missing. If a step fails, the engine restores that snapshot by
 itself, and the boot after checks that the machine really is back. While it
-takes or restores the snapshot, it holds apt's lock, so automatic updates
-cannot change packages in the middle.
+takes or restores the snapshot, it holds dpkg's locks, so automatic updates
+cannot change packages in the middle. Before a restore, it also stops
+anything the failed step left running.
 
 The snapshot leaves out `/home`. It also leaves out `/boot/efi`: on a
 dual-boot machine that is Windows' EFI partition too, and a restore must not
@@ -128,7 +129,10 @@ the other. 22.10 to 23.04 healed in 34 minutes, 23.04 to 23.10 in 20, and
 purpose, with a disk filled up at the chosen moment. First its upgrader
 refused for lack of space. Then the disk filled halfway through its install.
 The engine restored 24.04 both times, the second time on the full disk. The
-last upgrade has not healed yet.
+last upgrade has not healed yet. The second run also showed a dpkg left
+running by the failed upgrade, into the restore's first second. Since
+2026-10-11 the engine stops such leftovers before it restores; that has
+passed offline, not yet on the VM.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

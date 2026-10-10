@@ -10,7 +10,8 @@ offline too (stubbed machine, no VM; on Python 3.12 and 3.10). These runs
 prove the same machinery on a real machine, with fixtures that take minutes,
 before any real upgrade relies on it. Runs E and F, at the end, fail a real
 upgrade on purpose. **They passed on 2026-10-10**: both ended `rolled_back`.
-Their records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`.
+Their records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`. Run G, last,
+checks the fix for what F found. Not run yet.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -192,8 +193,9 @@ Things to know when reading the output:
   engine adds those lines; on 2026-10-09, before it did, Run D named only one
   source.
 - **"the package manager is busy — waiting 60s before the snapshot"** (or
-  "before the restore"): another program holds apt's lock. The engine holds
-  that lock while it snapshots or restores, so it waits its turn first.
+  "before the restore"): another program holds one of dpkg's two locks. The
+  engine holds both while it snapshots or restores, so it waits its turn
+  first. Before 2026-10-11 it took only the frontend's.
 - **"writing the snapshot to disk"** comes after every snapshot. Timeshift
   does not flush its copy itself.
 - **The journal can stop at "writing the snapshot to disk".** The snapshot's
@@ -313,4 +315,64 @@ Seen on 2026-10-10 (notes in `evidence/README.md`):
   while a dpkg it had started was still running, so the restore began with
   that dpkg still unpacking. The second error is the upgrader's install
   process retrying, stopped by the engine's hold on dpkg's frontend lock
-  ("held by process ... (python3)"). DESIGN.md §15 has the open question.
+  ("held by process ... (python3)"). The fix came on 2026-10-11: Run G,
+  next.
+
+## Run G: a failed step that leaves something running
+
+Run F found that a failed upgrade can leave processes running: the upgrader
+exited while its install process and a dpkg went on, into the restore. Since
+2026-10-11 the engine stops them before a restore. It also holds dpkg's own
+lock, not only the frontend's (DESIGN.md §16). Run G checks both, in about 10
+minutes, with `leftover-proof.yaml`. Its one step starts a process in a
+session of its own, which holds dpkg's own lock as F's leftover dpkg did.
+Then the step exits 1. Not run yet.
+
+| part | what it proves |
+|------|----------------|
+| a second session holds dpkg's own lock before the snapshot | the engine waits for that lock too, not only the frontend's |
+| the step's leftover process | the engine stops it before the restore, and the record names it |
+| the restore | it starts at once: the leftover's lock went with it |
+
+```bash
+# 0. Setup, on the VM as Run F left it (24.04). Room first: Runs E's and F's
+#    snapshots go.
+cd ~/sf-3000 && git pull && git log --oneline -1
+python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed
+sudo timeshift --delete --snapshot 2026-10-10_17-53-28 --scripted
+sudo timeshift --delete --snapshot 2026-10-10_18-11-25 --scripted
+sudo rm -rf /var/lib/sf3000-proof
+
+# Second session first: hold dpkg's own lock, not the frontend's, until Enter.
+sudo python3 -c "import fcntl, os; fd = os.open('/var/lib/dpkg/lock', os.O_RDWR); fcntl.lockf(fd, fcntl.LOCK_EX); input('holding dpkg lock - press Enter to let go ')"
+# First session:
+sudo python3 engine/runner.py --procedures tests/procedure-proof --run leftover-proof --take-snapshot
+# Answer y.
+journalctl -fu sf3000-procedure
+#   "the package manager is busy — waiting 60s before the snapshot (attempt 2
+#   of 30)". Now press Enter in the second session. Within a minute: "taking a
+#   Timeshift snapshot" (a full copy, about 3 minutes), "leave: ... running",
+#   "its command failed (exit 1)", "stopped what the step left running:
+#   N python3", "freed the engine's 256 MB reserve", "restoring Timeshift
+#   snapshot ...". No "busy" line before the restore. The VM reboots by itself.
+# After the reboot:
+python3 engine/runner.py --status    # stopped: step leave: ... Restored Timeshift snapshot <name>
+ls /var/lib/sf3000-proof             # No such file: restored away
+journalctl -b -1 -u sf3000-procedure --no-pager | grep -m1 busy   # the wait, kept: it came before the snapshot
+python3 -c 'import json; r = [json.loads(l) for l in open("/var/log/sf3000/runs.jsonl")][-1]; print(r["step_id"], r["outcome"], r["failure"], r["rollback_result"], r["leftovers_stopped"])'
+#   leave rolled_back fix_failed ok: back to 24.04 packages:... ['N python3']
+
+# Copy the logs off (on Windows, from the repo):
+#   scp -r -P 2223 rht@127.0.0.1:/var/log/sf3000 logs/kinetic-run-g
+```
+
+Expected: one new record, after Runs E's and F's.
+
+| Run | step | outcome | what else to check |
+|-----|------|---------|--------------------|
+| G | leave | `rolled_back` | `failure: fix_failed`, `fix_exit_code: 1`, `leftovers_stopped: ["N python3"]`, `rollback_result: "ok: back to 24.04 packages:..."` |
+
+If the journal says "busy — waiting 60s before the restore", the leftover was
+not stopped, and the fix did not work. The restore then waits up to 30
+minutes and gives up, leaving the snapshot untouched (`rollback_failed`). To
+end it sooner, stop the leftover by hand: `sudo pkill -f 'time\.sleep\(3600\)'`.

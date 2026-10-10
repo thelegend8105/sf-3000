@@ -256,9 +256,11 @@ distro.
   - Its snapshot leaves out `/boot/efi`, which on a dual-boot machine holds
     Windows' boot files too. It also leaves out the release upgrader's logs,
     so a failed upgrade's reason survives the restore.
-  - While it takes its snapshot or restores it, it holds dpkg's lock, so
-    nothing can change packages in the middle. The snapshot is written to
-    disk before step 1 starts.
+  - While it takes its snapshot or restores it, it holds dpkg's two locks,
+    the frontend's and dpkg's own, so nothing can change packages in the
+    middle. The snapshot is written to disk before step 1 starts.
+  - Before it restores after a failed step, it stops whatever the step left
+    running.
   - It keeps 256 MB set aside while it runs, and frees it first when a step
     fails, so that a full disk cannot stop the restore.
   - A step cut off by a crash or a power-off is never re-run by itself.
@@ -473,8 +475,9 @@ freed its reserve on the full disk and restored a half-upgraded machine.
 Both runs ended `rolled_back`, with the machine back on 24.04 as it was. Both
 restores left the upgrader's logs in place, and Run E's said why it stopped.
 Run F also found a gap: the upgrader exited while a dpkg it started was still
-running, and that dpkg finished during the first second of the restore
-(§15). The records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`.
+running, and that dpkg finished during the first second of the restore. The
+fix came the next day (§16). The records are in
+`evidence/ubuntu-22.10-2026-10-10-5.jsonl`.
 
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
@@ -482,7 +485,10 @@ procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, `--cancel` after a cut-off, and a wait for
 dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
 has the last upgrade healed, and its first step has only been skipped: a
-step 1 that installs updates and reboots has not been seen (§16).
+step 1 that installs updates and reboots has not been seen (§16). Nor has
+the 2026-10-11 fix (§16): a failed step's leftovers stopped before the
+restore, and a wait for dpkg's own lock. Run G in `tests/procedure-proof/`
+is written for both.
 
 ---
 
@@ -515,16 +521,6 @@ the contract everything else plugs into.
   VMs/containers)?
 - What's the very first *real* problem we want fixed end-to-end (fix included,
   not just detected)?
-- What should the engine do with what a failed step leaves running? *Raised
-  by Run F (2026-10-10).* The 26.04 upgrader exited 1 while a dpkg it had
-  started was still unpacking. The engine waits only for dpkg's frontend lock
-  before a restore, and that one was free. So the restore began with dpkg
-  still running, and the upgrader's install process later ran its
-  post-install scripts during the restore. The restore came out right, by
-  timing. *Proposed:* when a step fails, first stop every process still
-  running in the engine's service, other than the engine, and only then free
-  the reserve. Also wait for dpkg's inner lock, `/var/lib/dpkg/lock`, as well
-  as the frontend lock, as apt does.
 
 ---
 
@@ -977,7 +973,8 @@ lock. The engine waited two tries, took the lock at the next one after it was
 let go, and held it while Timeshift copied: apt, asked for the lock then,
 named the engine's own process. The wait before a restore has not been seen.
 Run F, on 2026-10-10, showed that the frontend lock is not enough there: a
-dpkg the upgrader left running held only the inner lock (§15).
+dpkg the upgrader left running held only dpkg's own lock. The engine has
+held both since 2026-10-11 (below).
 
 **2026-10-09 — The snapshot is written to disk before step 1.** Timeshift does
 not flush its copy when it finishes (read in 22.06.5), and neither did the
@@ -1065,9 +1062,56 @@ README says to check for one first. On the VM, in Runs E and F on
 2026-10-10, nothing was waiting, and step 1 was skipped both times. A step 1
 that installs updates and reboots has not been seen.
 
+**2026-10-11 — Before a restore, the engine stops what the failed step left
+running, and it holds both of dpkg's locks.** Run F on the VM (2026-10-10)
+filled the disk during the 26.04 install. The upgrader runs dpkg from a child
+process, in a session of its own (`pty.fork()`). Its main process exited 1
+while that child and its dpkg went on. The engine saw the exit and started
+the restore. It waited only for dpkg's frontend lock, which nobody held any
+more. dpkg held its own lock, `/var/lib/dpkg/lock`. With the room the engine
+had just freed, it unpacked four more packages in the restore's first
+second. Nine seconds into the restore, the child retried the upgrade. The
+engine's lock stopped that, but the child then ran the upgrader's
+post-install scripts. The restore still came out right, by timing.
+
+So two changes:
+
+- When a step fails and a restore follows, the engine first stops every
+  process still running in its service, other than itself (SIGKILL). Only
+  steps run there, so each one is something the step left behind. The
+  kernel lists them in the service's control group (`cgroup.procs`, cgroup
+  v2). A session of its own does not take a process out of that group,
+  though it does take it out of the process group the time limit stops.
+  This comes before the reserve is freed, so the freed room goes to the
+  restore. The step's record names what was stopped (`leftovers_stopped`).
+- Around the snapshot and the restore, the engine holds dpkg's own lock as
+  well as the frontend's, taken in apt's order. A dpkg still running then
+  makes it wait, like any other holder. If either lock is busy, it keeps
+  neither and tries again a minute later.
+
+*Why only before a restore:* the service runs with `KillMode=process`, so
+that an upgrade halfway through is left to finish if the engine itself dies
+(2026-10-07). Without a restore to follow, the engine stops and a person
+takes over, so the step's leftovers are left to finish too. Before a
+restore, they would race it. *Why SIGKILL, at once:* the restore undoes
+whatever they were doing, and a process given time to clean up would only
+change the machine more. *Why only inside the service:* the engine checks
+that its control group is `sf3000-procedure.service`, so it never stops
+anything in a person's own session.
+
+Offline: built and passing on Python 3.12 and 3.10. Seven deliberate breaks
+of the new code were each caught by a check. Not yet run on a VM: Run G in
+`tests/procedure-proof/` does that. Its fixture's step leaves a process
+holding dpkg's own lock, then fails.
+
 ---
 
-*Last updated: revision 27 — Runs E and F made the 26.04 upgrade fail on
+*Last updated: revision 28 — before a restore, the engine stops what the
+failed step left running, and it holds dpkg's own lock as well as the
+frontend's (2026-10-11), the fix for what Run F found. Built and passing
+offline on Python 3.12 and 3.10, not yet run on a VM; §10, §13, §15 and §16
+updated.
+Revision 27 — Runs E and F made the 26.04 upgrade fail on
 the VM on purpose (2026-10-10): the upgrader refused for space, then the disk
 filled mid-install. The engine restored 24.04 both times, the second time on
 a full disk, from a half-upgraded machine. Run F also showed a dpkg the

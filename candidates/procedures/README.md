@@ -45,9 +45,13 @@ upgrades from, and the engine then names the one that applies.
   back. `/boot/efi` is left out because on the lab's machines it is the
   Windows disk's EFI partition: a restore must not rewrite Windows' boot
   files.
-- **Holds apt's lock while it snapshots or restores,** so the automatic
+- **Holds dpkg's locks while it snapshots or restores,** so the automatic
   updates cannot change packages in the middle. It also writes the snapshot
   to disk before the upgrade starts.
+- **Stops what a failed upgrade left running, before it restores.** The
+  upgrader installs from a separate process, which can outlive it. In Run F
+  a dpkg went on unpacking into the restore's first second. Since
+  2026-10-11 the engine stops such processes first (offline only so far).
 - **Keeps the upgrader's logs through a restore.** The upgrader writes why it
   failed only to `/var/log/dist-upgrade/main.log`. That folder is left out
   of the snapshot, so after a failed upgrade is restored, the log is still

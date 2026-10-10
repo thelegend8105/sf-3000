@@ -1,0 +1,38 @@
+# VM fixture for a step that fails and leaves something running: the shape
+# Run F found in the 26.04 upgrader (2026-10-10). The one step leaves marker
+# `left` in /var/lib/sf3000-proof/, then starts a process in a session of its
+# own that holds dpkg's own lock (/var/lib/dpkg/lock), as the upgrader's
+# leftover dpkg did. Then the step exits 1.
+#
+# Run with --take-snapshot. Before the restore the engine must stop that
+# process, and the step's record names it (leftovers_stopped). Its lock goes
+# with it, so the restore starts at once instead of waiting for dpkg's lock,
+# and the boot after finds the machine back (rolled_back). See README.md,
+# Run G.
+id: leftover-proof
+description: Fixture - one step that leaves a process holding dpkg's lock, then fails
+applies_to:
+  os: linux
+  distros: [ubuntu]
+risk: moderate
+requires_privilege: true
+reverse:
+  strategy: none
+steps:
+  - id: leave
+    description: Leave marker left and a process holding dpkg's lock, then exit 1
+    detect:
+      command: '[ -e /var/lib/sf3000-proof/left ] && echo 1 || echo 0'
+      produces: integer
+    expect:
+      predicate: equals
+      value: 1
+    run:
+      default: |
+        mkdir -p /var/lib/sf3000-proof && touch /var/lib/sf3000-proof/left
+        setsid python3 -I -c 'import fcntl, os, time; fd = os.open("/var/lib/dpkg/lock", os.O_RDWR); fcntl.lockf(fd, fcntl.LOCK_EX); time.sleep(3600)' </dev/null >/dev/null 2>&1 &
+        sleep 2
+        exit 1
+    timeout_minutes: 1
+    reboot_after: false
+source: "TEST FIXTURE - not a library entry. Exercises a failed step that leaves a process running in a session of its own, holding dpkg's lock: the engine must stop it before the restore, and name it in the record."
