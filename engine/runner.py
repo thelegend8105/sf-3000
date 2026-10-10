@@ -592,12 +592,16 @@ RESTORE_TIMEOUT = 2 * 3600
 #     restore must not rewrite Windows'. Timeshift's restore reinstalls GRUB
 #     afterwards, which writes only Ubuntu's own folder there, as every GRUB
 #     update does.
+#   * the release upgrader's logs. It writes why it failed only there (its
+#     main.log), not to the output the engine keeps. Left out, they survive
+#     the restore that follows a failed upgrade.
 SNAPSHOT_EXCLUDES = [
     "/var/lib/sf3000/***",
     "/var/log/sf3000/***",
     f"/etc/systemd/system/{PROCEDURE_UNIT}",
     f"/etc/systemd/system/multi-user.target.wants/{PROCEDURE_UNIT}",
     "/boot/efi/***",
+    "/var/log/dist-upgrade/***",
 ]
 
 APT_CHECK_TIMEOUT = 15 * 60

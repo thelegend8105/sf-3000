@@ -39,6 +39,10 @@ upgrades from, and the engine then names the one that applies.
 - **Holds apt's lock while it snapshots or restores,** so the automatic
   updates cannot change packages in the middle. It also writes the snapshot
   to disk before the upgrade starts.
+- **Keeps the upgrader's logs through a restore.** The upgrader writes why it
+  failed only to `/var/log/dist-upgrade/main.log`. That folder is left out
+  of the snapshot, so after a failed upgrade is restored, the log is still
+  there to read.
 - **Waits after a cut-off.** If the machine goes down mid-upgrade, the boot
   after does not restore by itself. Running the same command again offers the
   restore; `--cancel` leaves the machine as it is.

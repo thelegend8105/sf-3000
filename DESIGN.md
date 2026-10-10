@@ -254,7 +254,8 @@ distro.
   - It installs only what it needs to work (Timeshift, pyyaml, jsonschema),
     only with apt, and only after a y.
   - Its snapshot leaves out `/boot/efi`, which on a dual-boot machine holds
-    Windows' boot files too.
+    Windows' boot files too. It also leaves out the release upgrader's logs,
+    so a failed upgrade's reason survives the restore.
   - While it takes its snapshot or restores it, it holds dpkg's lock, so
     nothing can change packages in the middle. The snapshot is written to
     disk before step 1 starts.
@@ -927,9 +928,32 @@ until `sync` returns. A power cut before then stops the procedure, with no step
 run. On the 22.10 VM on 2026-10-10, the `sync` after a 27-second snapshot took
 under a second.
 
+**2026-10-10 — The upgrader's logs are left out of the snapshot.** The release
+upgrader writes why it failed only to its own log,
+`/var/log/dist-upgrade/main.log`. Its non-interactive frontend has no screen:
+`error()` only logs, and logging goes only to that file (read in the 23.04
+upgrader's source). The engine keeps the step's output, not that file. A
+failed upgrade is restored at once, and the restore put `/var/log/dist-upgrade`
+back as it was before the upgrade. So the reason was lost with the failure,
+before anyone could read it.
+
+The engine now adds `/var/log/dist-upgrade/***` to its excludes. Timeshift's
+restore leaves alone whatever the snapshot excluded, so the failed attempt's
+logs survive. A Timeshift config from an older engine gets the new exclude
+added, and keeps the rest. The next attempt moves the old logs into a dated
+folder there, so they are not overwritten either.
+
+*Why only this folder:* the steps' own output already goes to
+`/var/log/sf3000/`, which survives. The upgrader's `apt-term.log`, in the same
+folder, has dpkg's output during the upgrade. Not yet run on a VM.
+
 ---
 
-*Last updated: revision 21 — Runs B and D ran again on the 22.10 VM with
+*Last updated: revision 22 — the release upgrader's logs are left out of the
+engine's snapshots, so a failed upgrade's reason survives the restore
+(2026-10-10). Built and passing offline on Python 3.12 and 3.10, not yet run
+on the VM; §10 and §16 updated.
+Revision 21 — Runs B and D ran again on the 22.10 VM with
 revision 20's fixes (2026-10-10). The engine waited for dpkg's lock while
 another program held it, then held it through the snapshot; the snapshot was
 synced; both dead sources were named. §12, §13 and §16 updated.

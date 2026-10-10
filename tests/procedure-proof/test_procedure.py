@@ -1042,6 +1042,13 @@ with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
     runner.prepare_timeshift_config("uuid-1")
     check("running twice adds nothing", json.loads(runner.TIMESHIFT_CONF.read_text())["exclude"],
           ["/opt/big/***"] + runner.SNAPSHOT_EXCLUDES)
+    # A machine an older engine ran on has its five, not the upgrader's logs.
+    older = runner.SNAPSHOT_EXCLUDES[:5]
+    runner.TIMESHIFT_CONF.write_text(json.dumps({"btrfs_mode": "false", "exclude": older}))
+    runner.prepare_timeshift_config("uuid-1")
+    check("an older engine's five kept, the upgrader's logs added after them",
+          json.loads(runner.TIMESHIFT_CONF.read_text())["exclude"],
+          older + ["/var/log/dist-upgrade/***"])
     runner.TIMESHIFT_CONF.write_text(json.dumps({"btrfs_mode": "true"}))
     try:
         runner.prepare_timeshift_config("uuid-1")
@@ -1050,11 +1057,12 @@ with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
         check("btrfs mode refused", "RuntimeError", "RuntimeError")
 
 print("\nThe excludes cover exactly what a restore must not touch")
-check("state dir, log dir, unit, enable link, the EFI partition", runner.SNAPSHOT_EXCLUDES, [
+check("state dir, log dir, unit, enable link, the EFI partition, the upgrader's logs",
+      runner.SNAPSHOT_EXCLUDES, [
     f"{runner.PROCEDURE_STATE_DIR.as_posix()}/***", f"{runner.PROCEDURE_LOG_DIR.as_posix()}/***",
     runner.PROCEDURE_UNIT_PATH.as_posix(),
     f"/etc/systemd/system/multi-user.target.wants/{runner.PROCEDURE_UNIT}",
-    "/boot/efi/***"])
+    "/boot/efi/***", "/var/log/dist-upgrade/***"])
 check("create passes no --tags: Timeshift 22.06.5 refuses O",
       runner.snapshot_create_cmd({"device": "/dev/sda2", "comment": "C"}),
       ["timeshift", "--create", "--rsync", "--snapshot-device", "/dev/sda2",

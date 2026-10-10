@@ -80,8 +80,9 @@ ls /var/lib/sf3000-proof             # "No such file or directory": restored awa
 which timeshift                      # still there: installed before the snapshot
 sudo timeshift --list                # the snapshot, comment "sf3000 procedure-proof ..."
 sudo python3 -c 'import json; print(*json.load(open("/etc/timeshift/timeshift.json"))["exclude"], sep="\n")'
-#   the engine's five, ending "/boot/efi/***". Timeshift may list its own
-#   after them, such as /home/rht/**: a first snapshot rewrites this file.
+#   the engine's six, ending "/boot/efi/***" and "/var/log/dist-upgrade/***".
+#   Timeshift may list its own after them, such as /home/rht/**: a first
+#   snapshot rewrites this file.
 
 # --- Run B with dpkg's lock held (as on 2026-10-10) -------------------------
 # Optional: shows the engine wait for the lock, then hold it. Before the --run,
@@ -167,12 +168,14 @@ Things to know when reading the output:
   the snapshot, so the engine's own records survive. That is on purpose: it is
   how the boot after the restore knows what happened. Read the journal before
   answering y in Run C.
-- **The engine adds five excludes to `/etc/timeshift/timeshift.json`.** They
-  are its state, its logs, its service file and enable link, and `/boot/efi`.
-  The engine changes nothing else in that file. Timeshift itself rewrites it
-  in its own layout when it estimates the size of a first snapshot. The VM boots with BIOS, so it has no
-  `/boot/efi`, and here that exclude only shows up in the file. The restore
-  leaving a shared EFI partition alone needs an EFI VM.
+- **The engine adds six excludes to `/etc/timeshift/timeshift.json`.** They
+  are its state, its logs, its service file and enable link, `/boot/efi`,
+  and the release upgrader's logs (`/var/log/dist-upgrade`, since
+  2026-10-10; the runs before had the first five). The engine changes nothing
+  else in that file. Timeshift itself rewrites it in its own layout when it
+  estimates the size of a first snapshot. The VM boots with BIOS, so it has
+  no `/boot/efi`, and here that exclude only shows up in the file. The
+  restore leaving a shared EFI partition alone needs an EFI VM.
 - **Run A's step three reads `fix_failed`, not `interrupted`.** The time limit
   stopped it, and the engine was still running to record that. `interrupted`
   is for a machine that went down mid-step: Run C.

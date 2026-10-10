@@ -78,6 +78,8 @@ What takes several files to see:
   engine's state, logs and unit files out of the snapshot. Otherwise a restore
   would roll the procedure back to step 1 and it would loop. `/boot/efi` is
   excluded too: on the lab's dual-boot machines it holds Windows' boot files.
+  So is `/var/log/dist-upgrade`, so a failed upgrade's own logs survive the
+  restore.
   A restore counts as done only when a fingerprint (the release plus every
   installed package version) matches the one taken before the snapshot.
   Timeshift's exit code is never trusted. The engine holds dpkg's frontend
