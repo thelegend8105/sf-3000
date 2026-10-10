@@ -11,7 +11,8 @@ prove the same machinery on a real machine, with fixtures that take minutes,
 before any real upgrade relies on it. Runs E and F, at the end, fail a real
 upgrade on purpose. **They passed on 2026-10-10**: both ended `rolled_back`.
 Their records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`. Run G, last,
-checks the fix for what F found. Not run yet.
+checks the fix for what F found. **It passed on 2026-10-11**; its record is
+in `evidence/ubuntu-22.10-2026-10-11.jsonl`.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -326,7 +327,8 @@ exited while its install process and a dpkg went on, into the restore. Since
 lock, not only the frontend's (DESIGN.md §16). Run G checks both, in about 10
 minutes, with `leftover-proof.yaml`. Its one step starts a process in a
 session of its own, which holds dpkg's own lock as F's leftover dpkg did.
-Then the step exits 1. Not run yet.
+Then the step exits 1. **It passed on 2026-10-11.** What it showed is under
+"Seen on 2026-10-11" at the end.
 
 | part | what it proves |
 |------|----------------|
@@ -376,3 +378,15 @@ If the journal says "busy — waiting 60s before the restore", the leftover was
 not stopped, and the fix did not work. The restore then waits up to 30
 minutes and gives up, leaving the snapshot untouched (`rollback_failed`). To
 end it sooner, stop the leftover by hand: `sudo pkill -f 'time\.sleep\(3600\)'`.
+
+Seen on 2026-10-11 (notes in `evidence/README.md`):
+
+- The record as expected: `leave rolled_back fix_failed`, exit 1,
+  `leftovers_stopped: ["2040 python3"]`, and `ok: back to 24.04
+  packages:d778793cbf7390c2`, the same fingerprint as after Run F.
+- The restore began about 0.2 s after the step ended: no wait for dpkg's
+  lock, since the leftover's went with it. It deleted the marker and its
+  folder, and sent 22 MB.
+- The journal said "the package manager is busy — waiting 60s before the
+  snapshot" until the second session let go of dpkg's own lock. The
+  snapshot began 2 min 25 s after the apt check. It was a full copy, 158 s.

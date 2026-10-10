@@ -131,8 +131,8 @@ refused for lack of space. Then the disk filled halfway through its install.
 The engine restored 24.04 both times, the second time on the full disk. The
 last upgrade has not healed yet. The second run also showed a dpkg left
 running by the failed upgrade, into the restore's first second. Since
-2026-10-11 the engine stops such leftovers before it restores; that has
-passed offline, not yet on the VM.
+2026-10-11 the engine stops such leftovers before it restores. A test run on
+the VM showed it the same night.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

@@ -25,9 +25,10 @@ its commits. So a run logged at `2026-09-07T19:14Z` is dated 2026-09-08 in
 the tracker and the docs.
 
 **Older records have fewer fields.** The record format grew as the engine did.
-`blocked_reason` appears from commit 841625b on, and `settle_seconds` from
-46e6a5b on. A missing field means the engine that wrote the record predates
-it. It does not mean the value was null.
+`blocked_reason` appears from commit 841625b on, `settle_seconds` from
+46e6a5b on, and `leftovers_stopped` (procedure steps only) from 40564b9 on.
+A missing field means the engine that wrote the record predates it. It does
+not mean the value was null.
 
 ## The files
 
@@ -716,3 +717,47 @@ question.
 the upgrader could not write to the full disk. Its `main.log` has the error
 twice: first the parent's, then the child's. The engine's own messages went
 to the journal, which each restore rolled back.
+
+### `ubuntu-22.10-2026-10-11.jsonl`
+
+Run G of `tests/procedure-proof/`, on `KineticServer`, still on 24.04 as Run
+F left it. It checks the fix for what Run F found (DESIGN.md §16,
+2026-10-11). The clone was pulled to `40564b9`. Runs E's and F's snapshots
+were deleted first. A second session held dpkg's own lock,
+`/var/lib/dpkg/lock`, before the `--run`. Copied off at 01:18 IST.
+
+- Lines 1 to 6 are the 2026-10-10 `-5` file again, unchanged.
+- Line 7: `rolled_back`, `failure: fix_failed` (step `leave` of the fixture
+  `leftover-proof`). The step exited 1, as it is written to. The record has
+  `leftovers_stopped: ["2040 python3"]`: the engine stopped the process the
+  step had left holding dpkg's own lock. It then restored its snapshot
+  `2026-10-10_19-40-44`, and after the reboot the machine matched it: `ok:
+  back to 24.04 packages:d778793cbf7390c2`, the same as after Run F.
+
+**The timeline** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 19:38:20 | `--run`, and the apt check. The second session already holds dpkg's own lock |
+| 19:40:45 | the snapshot: 158 s, a full copy. It began after the second session let go |
+| 19:43:25 | the step: a marker, then a process in a session of its own that holds dpkg's own lock, then `exit 1` |
+| 19:43:27 | the engine stops that process (PID 2040), frees its reserve and starts the restore |
+
+The restore sent 22 MB. It deleted the step's marker and its folder.
+
+**What it shows.** Two things that had passed only offline:
+
+- The engine stopped a failed step's leftover before the restore, and named
+  it in the record. The leftover's lock went with it. So the restore began
+  about 0.2 s after the step ended, with no wait for dpkg's lock. Without the
+  stop, the engine would have waited for that lock, a minute at a time, for
+  up to 30 minutes, and then given up (`rollback_failed`).
+- The engine waited for dpkg's own lock before its snapshot, while nobody
+  held the frontend's. Before `40564b9` it took only the frontend's lock,
+  and would have copied the system at once. The wait is logged only to the
+  journal. The person running the VM saw "the package manager is busy —
+  waiting 60s before the snapshot" there, then let go of the lock. The
+  snapshot began 2 min 25 s after the apt check.
+
+The leftover was the fixture's, not a real upgrader's. Run F's own case, an
+upgrader's install process outliving it, has not been seen with the fix.

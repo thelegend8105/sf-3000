@@ -322,7 +322,9 @@ proactive sweep) live in the MVP.
   on that VM, one after the other: 22.10 to 23.04 healed in 34 minutes,
   23.04 to 23.10 in 20, and 23.10 to 24.04 in 27. Then the last upgrade was
   made to fail twice on purpose (Runs E and F). The engine restored 24.04
-  both times, once from a half-upgraded machine with a full disk. Remaining:
+  both times, once from a half-upgraded machine with a full disk. Run F
+  showed a dpkg left running into the restore; the fix passed Run G on
+  2026-10-11. Remaining:
   the last upgrade, then an EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
@@ -479,16 +481,22 @@ running, and that dpkg finished during the first second of the restore. The
 fix came the next day (§16). The records are in
 `evidence/ubuntu-22.10-2026-10-10-5.jsonl`.
 
+**Run G proved that fix on 2026-10-11,** on the same VM, with a test
+procedure. Its step left a process in a session of its own, holding dpkg's
+own lock, and failed. The engine stopped that process before the restore
+and named it in the record (`leftovers_stopped`). The restore then began at
+once and passed its check (`rolled_back`). Before the snapshot, a second
+session held dpkg's own lock, and the snapshot began only after it let go.
+The records are in `evidence/ubuntu-22.10-2026-10-11.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, `--cancel` after a cut-off, and a wait for
 dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
 has the last upgrade healed, and its first step has only been skipped: a
-step 1 that installs updates and reboots has not been seen (§16). Nor has
-the 2026-10-11 fix (§16): a failed step's leftovers stopped before the
-restore, and a wait for dpkg's own lock. Run G in `tests/procedure-proof/`
-is written for both.
+step 1 that installs updates and reboots has not been seen (§16). Nor has a
+real upgrade's leftover been stopped: Run G's was the test procedure's.
 
 ---
 
@@ -974,7 +982,8 @@ let go, and held it while Timeshift copied: apt, asked for the lock then,
 named the engine's own process. The wait before a restore has not been seen.
 Run F, on 2026-10-10, showed that the frontend lock is not enough there: a
 dpkg the upgrader left running held only dpkg's own lock. The engine has
-held both since 2026-10-11 (below).
+held both since 2026-10-11 (below). Run G, that day, showed it waiting for
+dpkg's own lock before a snapshot.
 
 **2026-10-09 — The snapshot is written to disk before step 1.** Timeshift does
 not flush its copy when it finishes (read in 22.06.5), and neither did the
@@ -1100,13 +1109,21 @@ that its control group is `sf3000-procedure.service`, so it never stops
 anything in a person's own session.
 
 Offline: built and passing on Python 3.12 and 3.10. Seven deliberate breaks
-of the new code were each caught by a check. Not yet run on a VM: Run G in
-`tests/procedure-proof/` does that. Its fixture's step leaves a process
-holding dpkg's own lock, then fails.
+of the new code were each caught by a check. *Seen on the VM on 2026-10-11,*
+in Run G of `tests/procedure-proof/`. The test procedure's step left a
+process holding dpkg's own lock, then failed. The engine stopped it (PID
+2040, named in the record), and the restore began about 0.2 s after the step
+ended, then passed its check. Before the snapshot, a second session held
+dpkg's own lock, and the snapshot began only after it let go. The leftover
+was the test procedure's: a real upgrader's has not been stopped yet.
 
 ---
 
-*Last updated: revision 28 — before a restore, the engine stops what the
+*Last updated: revision 29 — Run G proved revision 28's fix on the VM
+(2026-10-11): a failed step's leftover, holding dpkg's own lock, was stopped
+before the restore and named in the record, and the engine waited for
+dpkg's own lock before its snapshot; §12, §13 and §16 updated.
+Revision 28 — before a restore, the engine stops what the
 failed step left running, and it holds dpkg's own lock as well as the
 frontend's (2026-10-11), the fix for what Run F found. Built and passing
 offline on Python 3.12 and 3.10, not yet run on a VM; §10, §13, §15 and §16

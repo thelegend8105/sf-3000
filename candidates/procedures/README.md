@@ -51,7 +51,8 @@ upgrades from, and the engine then names the one that applies.
 - **Stops what a failed upgrade left running, before it restores.** The
   upgrader installs from a separate process, which can outlive it. In Run F
   a dpkg went on unpacking into the restore's first second. Since
-  2026-10-11 the engine stops such processes first (offline only so far).
+  2026-10-11 the engine stops such processes first. A test run on the VM
+  showed it (Run G in `tests/procedure-proof/`).
 - **Keeps the upgrader's logs through a restore.** The upgrader writes why it
   failed only to `/var/log/dist-upgrade/main.log`. That folder is left out
   of the snapshot, so after a failed upgrade is restored, the log is still
