@@ -314,9 +314,9 @@ proactive sweep) live in the MVP.
   the apt check's refusal. On 2026-10-10 Runs B and D ran again with the
   fixes that followed (§16). The engine waited while another program held
   dpkg's lock, then held it through the snapshot, and the apt check named
-  both dead sources. The same day the first of the four upgrades ran on that
-  VM: 22.10 to 23.04 healed in 34 minutes. Remaining: the other three
-  upgrades, then an
+  both dead sources. The same day the first two of the four upgrades ran on
+  that VM, one after the other: 22.10 to 23.04 healed in 34 minutes, and
+  23.04 to 23.10 in 20. Remaining: the last two upgrades, then an
   EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
@@ -350,7 +350,8 @@ proactive sweep) live in the MVP.
 - `schema/procedure.schema.json` — the rulebook for procedures.
 - `candidates/procedures/` — the 22.10 → 26.04 upgrade as four procedures,
   one upgrade each (`release-upgrade-to-23.04`, `-23.10`, `-24.04`,
-  `-26.04`). The first has healed once on a VM; the other three have not run.
+  `-26.04`). The first two have healed once each on a VM; the other two have
+  not run.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
@@ -440,12 +441,19 @@ to the end of the upgrader. The upgrader moved apt to 23.04 on old-releases by
 itself (`candidates/procedures/README.md`). The records are in
 `evidence/ubuntu-22.10-2026-10-10-2.jsonl`.
 
+**The second upgrade ran the same day,** on the same VM, with no restore
+between: `release-upgrade-to-23.10`. Timeshift was already there. The
+snapshot took 129 s, and the step's `full-upgrade` had nothing to do. The
+23.10 upgrader moved apt to 23.10 on old-releases, and after the reboot the
+check read 23.10 (`healed`). It took 20 minutes from the apt check to the end
+of the upgrader. The records are in `evidence/ubuntu-22.10-2026-10-10-3.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, `--cancel` after a cut-off, and a wait for
 dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
-have the other three upgrade procedures.
+have the last two upgrade procedures.
 
 ---
 
@@ -956,11 +964,17 @@ folder there, so they are not overwritten either.
 
 *Why only this folder:* the steps' own output already goes to
 `/var/log/sf3000/`, which survives. The upgrader's `apt-term.log`, in the same
-folder, has dpkg's output during the upgrade. Not yet run on a VM.
+folder, has dpkg's output during the upgrade.
+
+*Seen on 2026-10-10:* visit 2's upgrader moved visit 1's logs into a dated
+folder, as expected. No restore has tested the exclude yet.
 
 ---
 
-*Last updated: revision 23 — the first upgrade, 22.10 to 23.04, healed on the
+*Last updated: revision 24 — the second upgrade, 23.04 to 23.10, healed on
+the same VM in 20 minutes, with no restore after visit 1 (2026-10-10); §12,
+§13 and §16 updated.
+Revision 23 — the first upgrade, 22.10 to 23.04, healed on the
 22.10 VM in 34 minutes (2026-10-10); §12 and §13 updated.
 Revision 22 — the release upgrader's logs are left out of the
 engine's snapshots, so a failed upgrade's reason survives the restore

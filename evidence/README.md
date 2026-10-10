@@ -454,3 +454,83 @@ not kept here) has no error that stopped anything:
   `multipath-tools` and `snapd` packages: their restarts were refused, such as
   "Failed to restart snapd.mounts-pre.target: Operation refused". The output
   itself says one of these "can be safely ignored" (LP: #2035098).
+
+### `ubuntu-22.10-2026-10-10-3.jsonl`
+
+Visit 2 of the lab's upgrade: `release-upgrade-to-23.10`, with
+`--take-snapshot`, on `KineticServer`. The machine went from Ubuntu 23.04 to
+23.10. It started where visit 1 left it, with no restore in between. The clone
+was pulled to `1050e99`. The automatic updates were on. Copied off at 19:00
+IST. The name ends in `-3` because two files already have this date. It keeps
+`22.10` in its name, as visit 1's does: it is the 22.10 VM.
+
+- Lines 1 and 2 are visit 1's file again, unchanged.
+- Line 3: `healed` (`to-23.10`). The detect read 2304 before. The step exited
+  0 at its first attempt, the engine rebooted, and the check read 2310 (23.10,
+  and `dpkg --audit` empty). Snapshot `2026-10-10_13-08-30`.
+
+There is no `install` line: Timeshift was already there.
+
+**The timeline** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 13:07:45 | the apt check: all four lunar sources on old-releases |
+| 13:08:30 | the snapshot: 129 s. It began 45 s after the apt check, the y included. A wait for apt's lock lasts 60 s, so there was none |
+| 13:10:41 | the step: `apt-get full-upgrade` had nothing to do (0 upgraded) |
+| 13:10:48 | the 23.10 upgrader starts, from `mantic.tar.gz` ("Good signature from Ubuntu Archive Automatic Signing Key (2018)") |
+| 13:12:17 | its download, about 875 MB, until 13:18:05 |
+| 13:18:06 | a dry run, 2 s; then libc6 alone, until 13:18:21 |
+| 13:18:45 | its main install, until 13:26:41; obsolete packages removed by 13:27:12 |
+
+From the apt check to the end of the upgrader took 20 minutes, then a reboot
+and the check. The logs were copied off at 13:30:43 (19:00 IST), after the
+record was written, so the visit took under 23 minutes in all. Visit 1 took longer
+because it also installed Timeshift and 22.10's 137 pending updates.
+
+**The upgrader's own logs** (`/var/log/dist-upgrade`, copied off but not kept
+here). At its start, the upgrader moved visit 1's logs into a dated
+subfolder, `20261010-1310`. The `main.log` there is identical to visit 1's
+copy. The new `main.log` has the same one ERROR as visit 1's:
+
+```
+2026-10-10 13:11:08,195 ERROR No valid mirror found
+```
+
+The upgrader looked for 23.10 on the main archive and on
+`gb.archive.ubuntu.com`. Both answered 404, so the non-interactive yes moved
+all ten apt lines to 23.10 on old-releases, as in visit 1. "Not an UEFI
+system" and "failed to determine user upgrading" appear again, for the same
+reasons. Before its download, it found 11.6 GB free on `/` and needed 1.2 GB.
+
+**The upgrader installs in three passes.** Both visits show it. Read in the
+upgrader's source (`DistUpgradeController.py`, mantic):
+
+- a dry run, with dpkg swapped for `/bin/true`. It installs nothing, but apt's
+  `history.log` still lists it.
+- libc6 alone, with `libc-bin` and `locales`. If this pass fails, the upgrader
+  stops with exit 1 ("Upgrade incomplete"), and the engine restores the
+  snapshot.
+- everything else.
+
+**The step's output** (`release-upgrade-to-23.10-to-23.10.log`, copied off but
+not kept here) has no error that stopped anything:
+
+- `/etc/grub.d/10_linux: 1: version_find_latest: not found`, once, when
+  `mdadm`'s setup rebuilt GRUB's menu. GRUB 2.12's library was unpacked by
+  then, but the old menu script was still in place: dpkg replaces a config
+  file only when its package is set up. Once GRUB was set up, its menu was
+  rebuilt three more times, each listing the new 6.5 kernel.
+- "Warning: Stopping ssh.service, but it can still be activated by:
+  ssh.socket", when `openssh-server` was upgraded. `ssh.socket` starts the SSH
+  server when someone connects. Visit 1 did not show this. SSH worked after
+  the reboot: the logs were copied off over it.
+- "Could not execute systemctl", once, after `snapd`. It is the same refused
+  restart as in visit 1.
+- No snap error this time. The upgrader left the `lxd` snap alone ("Snap lxd
+  is not tracking the release channel").
+
+The clean-up removed 27 packages that nothing needed any more. Among them
+were the 5.19 kernel, `binutils` and `python3-setuptools`. It kept the
+running 6.2 kernel. `python3-yaml` and `python3-jsonschema` were upgraded, not
+removed, so the engine can still start the next visit.
