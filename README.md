@@ -114,7 +114,10 @@ machine as it is. `--snapshot <name>` records a snapshot you took yourself
 The procedure machinery ran on the 22.10 VM on 2026-10-08 and 2026-10-09
 (`tests/procedure-proof/`, all four runs passed). That covered a reboot, a
 time limit, the engine's own snapshot and its automatic restore, a power cut
-mid-step, and the apt check. The four upgrades have not run yet.
+mid-step, and the apt check. Two runs were repeated on 2026-10-10. While
+another program held apt's lock, the engine waited for it, then held it
+through the snapshot. Given two dead apt sources, the check named both. The
+four upgrades have not run yet.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

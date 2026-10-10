@@ -2,10 +2,13 @@
 
 **Runs A to D passed on the 22.10 VM on 2026-10-08 and 2026-10-09.** The
 records are in `evidence/ubuntu-22.10-2026-10-09.jsonl`, with notes in
-`evidence/README.md`. `test_procedure.py` passes offline too (stubbed
-machine, no VM; on Python 3.12 and 3.10). These runs prove the same machinery
-on a real machine, with fixtures that take minutes, before any real upgrade
-relies on it.
+`evidence/README.md`. **Runs B and D passed again on 2026-10-10**, after the
+engine began to hold dpkg's lock and name every dead source. That Run B had
+the lock held by another program first (below). Its records are in
+`evidence/ubuntu-22.10-2026-10-10.jsonl`. `test_procedure.py` passes
+offline too (stubbed machine, no VM; on Python 3.12 and 3.10). These runs
+prove the same machinery on a real machine, with fixtures that take minutes,
+before any real upgrade relies on it.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -80,6 +83,17 @@ sudo python3 -c 'import json; print(*json.load(open("/etc/timeshift/timeshift.js
 #   the engine's five, ending "/boot/efi/***". Timeshift may list its own
 #   after them, such as /home/rht/**: a first snapshot rewrites this file.
 
+# --- Run B with dpkg's lock held (as on 2026-10-10) -------------------------
+# Optional: shows the engine wait for the lock, then hold it. Before the --run,
+# in a second ssh session, hold the lock the way apt does, until Enter:
+#   sudo python3 -c "import fcntl, os; fd = os.open('/var/lib/dpkg/lock-frontend', os.O_RDWR | os.O_CREAT, 0o640); fcntl.lockf(fd, fcntl.LOCK_EX); input('holding dpkg lock - press Enter to let go ')"
+sudo apt-get check                   # refused: "It is held by process N (python3)"
+# Then run Run B's --run line. The journal says "the package manager is busy —
+# waiting 60s before the snapshot (attempt 2 of 30)". Press Enter in the
+# second session. When "taking a Timeshift snapshot" appears, run
+# sudo apt-get check there again: refused, and N is now the engine's own,
+# the number in python3[N].
+
 # --- Run C: cut off by a power-off ------------------------------------------
 sudo python3 engine/runner.py --procedures tests/procedure-proof --run cut-off-proof --take-snapshot
 # Answer y. Then wait for step long to start (after the snapshot, minutes):
@@ -133,7 +147,9 @@ Run D writes no record. It changed nothing, like the other refusals.
 
 The 2026-10-09 file has 9 records, not 8. Run B's first try also wrote
 `snapshot_failed`, when Timeshift refused `--tags O` (fixed since; DESIGN
-§16). To list the records on the VM:
+§16). The 2026-10-10 file has 12: the same 9, then Run B's one, two and
+three again. Timeshift was already installed by then, so there is no second
+`install` record. To list the records on the VM:
 
 ```bash
 python3 -c 'import json; [print(r.get("step_id"), r["outcome"], r.get("failure") or "", r.get("rollback_result") or "") for r in map(json.loads, open("/var/log/sf3000/runs.jsonl"))]'
@@ -175,6 +191,10 @@ Things to know when reading the output:
   that lock while it snapshots or restores, so it waits its turn first.
 - **"writing the snapshot to disk"** comes after every snapshot. Timeshift
   does not flush its copy itself.
+- **The journal can stop at "writing the snapshot to disk".** The snapshot's
+  line, step one and the reboot can all come within one second. The reboot
+  then closes the session before `journalctl` shows them. The records show
+  that they ran.
 - **`restore.log` can end in zero bytes.** Timeshift's restore ends in
   `reboot -f`, which can cut off the file's last write.
 - **A restore resets the timestamp of `/home/rht`**, the folder itself.

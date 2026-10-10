@@ -310,7 +310,10 @@ proactive sweep) live in the MVP.
   machinery ran on the 22.10 VM (`tests/procedure-proof/`, Runs A to D): a
   reboot and the check after it, a time limit, Timeshift installed by the
   engine, its snapshot restored by itself, a power cut held for a person, and
-  the apt check's refusal. Remaining: the four upgrades on that VM, then an
+  the apt check's refusal. On 2026-10-10 Runs B and D ran again with the
+  fixes that followed (§16). The engine waited while another program held
+  dpkg's lock, then held it through the snapshot, and the apt check named
+  both dead sources. Remaining: the four upgrades on that VM, then an
   EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
@@ -417,11 +420,20 @@ Timeshift bug (§16), and the engine stopped without running a step
 (`snapshot_failed`). The records are in
 `evidence/ubuntu-22.10-2026-10-09.jsonl`.
 
+**On 2026-10-10 Runs B and D ran again**, with the engine holding dpkg's lock
+and naming every dead source (§16). In Run B another program held the lock
+first. The engine waited two minutes, then took the lock and held it while
+Timeshift copied: apt, asked for the lock during the snapshot, named the
+engine's own process. The snapshot was written to disk in under a second, and
+the restore and its check passed again (`rolled_back`). Run D named both dead
+sources. The records are in `evidence/ubuntu-22.10-2026-10-10.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
-that fails after its reboot, and `--cancel` after a cut-off. Nor have the
-four upgrade procedures themselves.
+that fails after its reboot, `--cancel` after a cut-off, and a wait for
+dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
+have the four upgrade procedures themselves.
 
 ---
 
@@ -877,6 +889,7 @@ The engine kept only the summary lines, so it left that host out. It now also
 keeps each `Err:` line, with its reason, whose source no summary line names.
 It also reads all of apt's output, not just the last 8 KB. Lab machine 1 has
 exactly this mix: a mirror that does not exist, and a repository with no 22.10.
+Run D ran again on 2026-10-10 and named both sources.
 
 **2026-10-09 — The engine holds dpkg's lock while it snapshots or restores.**
 After a restore, the engine compares the machine with a fingerprint of its
@@ -900,17 +913,27 @@ goes down while waiting for it counts as a cut-off, held for a person, not as
 a restore to check. On the 22.10 VM, the automatic updates were switched off
 for the runs instead. `repos-fixed` and the lab's machines have them on.
 
+Seen on the 22.10 VM on 2026-10-10, in Run B again. A second session held the
+lock. The engine waited two tries, took the lock at the next one after it was
+let go, and held it while Timeshift copied: apt, asked for the lock then,
+named the engine's own process. The wait before a restore has not been seen.
+
 **2026-10-09 — The snapshot is written to disk before step 1.** Timeshift does
 not flush its copy when it finishes (read in 22.06.5), and neither did the
 engine. So for half a minute or so, part of a new snapshot could exist only in
 memory. A power cut then would leave a damaged copy for a restore to put back.
 The engine now runs `sync` after the snapshot, and the phase stays SNAPSHOTTING
 until `sync` returns. A power cut before then stops the procedure, with no step
-run.
+run. On the 22.10 VM on 2026-10-10, the `sync` after a 27-second snapshot took
+under a second.
 
 ---
 
-*Last updated: revision 20 — the apt check names every dead source; dpkg's
+*Last updated: revision 21 — Runs B and D ran again on the 22.10 VM with
+revision 20's fixes (2026-10-10). The engine waited for dpkg's lock while
+another program held it, then held it through the snapshot; the snapshot was
+synced; both dead sources were named. §12, §13 and §16 updated.
+Revision 20 — the apt check names every dead source; dpkg's
 lock is held around the snapshot and the restore; the snapshot is synced to
 disk before step 1 (2026-10-09). Built and passing offline on Python 3.12 and
 3.10, not yet run on the VM; §10 and §16 updated.

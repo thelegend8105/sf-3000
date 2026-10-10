@@ -266,7 +266,8 @@ screenshots and confirmed by the person who ran them:
   2026-10-09T14:09:03+0000 kineticvm systemd[1]: Started sf3000-procedure.service.
   ```
 
-- **Run D**, just before 22:18 IST. Two dead sources were added: a host under
+- **Run D**, at 22:03 IST: its apt check's start in `apt-check.log`, copied
+  off on 2026-10-10. Two dead sources were added: a host under
   `.invalid`, and a suite old-releases does not have. The apt check refused
   with exit 9 before the box, and `--status` still showed Run C:
 
@@ -283,3 +284,100 @@ screenshots and confirmed by the person who ran them:
   for any source once one source fails hard (`apt-pkg/update.cc`). So the dead
   host appeared only on an `Err:` line, and the engine's report left those
   out.
+
+### `ubuntu-22.10-2026-10-10.jsonl`
+
+Runs B and D again, with the fixes of commit `74340e2`: dpkg's lock held
+around the snapshot and the restore, the snapshot written to disk, and every
+dead apt source named. On `KineticServer`, 2026-10-10 15:13 to 15:21 IST. The
+VM carried on from where Run D left it on 2026-10-09. It was not restored in
+between (its disk image was last created on 2026-10-08 at 18:57 IST). The
+clone was pulled to `74340e2` first. Copied off at 15:22 IST, after Run D.
+
+The file is the whole log again: 12 records. Lines 1–9 are the 2026-10-09
+file, byte for byte. Lines 10–12 are new:
+
+- Line 10: `healed` (`one`). Snapshot `2026-10-10_09-45-29`, 27 s, linked to
+  Run C's. Then `one`, a reboot, and its check after the boot
+  (`verify_after` 1).
+- Line 11: `healed` (`two`).
+- Line 12: `rolled_back` (`three`, `failure: fix_failed`). It was stopped at
+  its 1-minute limit, and the engine restored the snapshot by itself. "ok:
+  back to 22.10 packages:ec3d46dddee73727": the same fingerprint as every run
+  since 2026-10-09.
+
+**Run B: the lock.** Before the run, a second SSH session held dpkg's
+frontend lock with a python3 holder (`fcntl.lockf`, as apt takes it) that
+waited for Enter. `sudo apt-get check` was refused, so the holder worked. The
+apt check still passed: `apt-get update` takes a different lock. These lines
+come from the terminals, shown in a screenshot (15:16 IST) and confirmed by
+the person who ran them. The VM prints UTC. The journal:
+
+```
+Oct 10 09:43:29 kineticvm systemd[1]: Starting SF 3000: carry on procedure procedure-proof after a reboot...
+Oct 10 09:43:29 kineticvm python3[1312]:   → the package manager is busy — waiting 60s before the snapshot (attempt 2 of 30)
+Oct 10 09:44:29 kineticvm python3[1312]:   → the package manager is busy — waiting 60s before the snapshot (attempt 3 of 30)
+Oct 10 09:45:29 kineticvm python3[1312]: → taking a Timeshift snapshot of /dev/sda2 before step 1 (machine: 22.10 packages:ec3d46dddee73727)
+Oct 10 09:45:56 kineticvm crontab[1375]: (root) LIST (root)
+Oct 10 09:45:56 kineticvm crontab[1376]: (root) LIST (root)
+Oct 10 09:45:57 kineticvm python3[1312]:   → writing the snapshot to disk
+```
+
+The holder was let go between 09:44:29 and 09:45:29, and the engine took the
+lock at its next try. The second session asked apt for the lock again while
+the snapshot ran:
+
+```
+rht@kineticvm:~$ sudo apt-get check
+E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 1312 (python3)
+N: Be aware that removing the lock file is not a solution and may break your system.
+E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), is another process using it?
+```
+
+Process 1312 is the engine: the journal's `python3[1312]`. So the engine
+waited while another program held the lock, then held it itself while
+Timeshift copied.
+
+The journal stops at "writing the snapshot to disk". The rest came within the
+same second: line 10's step started at 09:45:57.41, and the reboot's broadcast
+says 09:45:57. So `sync` took under a second. The reboot closed the session
+before `journalctl` showed the last lines, and the restore later rolled the
+journal back to the snapshot.
+
+**The restore did not wait.** Nothing held the lock by then. Step `three`
+started at 09:46:21.19, and the restore at 09:47:21.20, as its limit ran out.
+
+**Timeshift's own logs** (`snapshot.log` and `restore.log`) were copied off as
+well, but are not kept here.
+
+- The snapshot linked to `2026-10-09_14-06-41` and took 27 s.
+- The restore sent 21 MB. It deleted `one`, `two` and their folder, and
+  touched nothing under the engine's excludes and nothing inside `/home`. It
+  reinstalled GRUB ("No error reported"), found only kernel 5.19.0-21, and
+  rebooted. This time its log ends cleanly, with no zero bytes.
+
+**Run D again**, at 15:21 IST, with the same two dead sources. The engine
+refused with exit 9 before the box, and `--status` still showed Run B. The
+person who ran it reported every output as expected: both sources named. apt's
+own output is in the copied `apt-check.log`:
+
+```
+Err:7 http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite Release
+  404  Not Found [IP: 162.213.35.94 80]
+Ign:1 http://sf3000-no-such-host.invalid/ubuntu kinetic InRelease
+Err:1 http://sf3000-no-such-host.invalid/ubuntu kinetic InRelease
+  Could not resolve 'sf3000-no-such-host.invalid'
+Reading package lists...
+E: The repository 'http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite Release' does not have a Release file.
+```
+
+The engine's parser (`apt_problems`), given that output on the host, returns
+the two lines it reports:
+
+```
+E: The repository 'http://old-releases.ubuntu.com/ubuntu sf3000-no-such-suite Release' does not have a Release file.
+Err:1 http://sf3000-no-such-host.invalid/ubuntu kinetic InRelease  Could not resolve 'sf3000-no-such-host.invalid'
+```
+
+The same log holds the first Run D's output, from 2026-10-09 at 22:03 IST. It
+has the same shape, and the parser names both sources from it too.
