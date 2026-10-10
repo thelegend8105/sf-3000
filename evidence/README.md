@@ -534,3 +534,83 @@ The clean-up removed 27 packages that nothing needed any more. Among them
 were the 5.19 kernel, `binutils` and `python3-setuptools`. It kept the
 running 6.2 kernel. `python3-yaml` and `python3-jsonschema` were upgraded, not
 removed, so the engine can still start the next visit.
+
+### `ubuntu-22.10-2026-10-10-4.jsonl`
+
+Visit 3 of the lab's upgrade: `release-upgrade-to-24.04`, with
+`--take-snapshot`, on `KineticServer`. The machine went from Ubuntu 23.10 to
+24.04 LTS, the first upgrade through plain `do-release-upgrade`. It started
+where visit 2 left it, with no restore in between. The clone was pulled to
+`83d21f6`. The automatic updates were on. Copied off at 21:06 IST. The name
+ends in `-4` because three files already have this date.
+
+- Lines 1 to 3 are visit 2's file again, unchanged.
+- Line 4: `healed` (`to-24.04`). The detect read 2310 before. The step exited
+  0 at its first attempt, the engine rebooted, and the check read 2404
+  (24.04, and `dpkg --audit` empty). Snapshot `2026-10-10_14-28-46`.
+
+**The timeline** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 14:28:38 | the apt check: all four mantic sources on old-releases |
+| 14:28:46 | the snapshot: 124 s. It began 8 s after the apt check, the y included, so there was no wait for apt's lock |
+| 14:30:52 | the step: `apt-get full-upgrade` had nothing to do (0 upgraded) |
+| 14:31:03 | the 24.04 upgrader starts (release-upgrader 24.04.29), fetched and checked by `do-release-upgrade` |
+| 14:31:17 | all ten apt lines move from old-releases to `gb.archive.ubuntu.com` |
+| 14:32:35 | its download, about 1.3 GB, until 14:42:14 |
+| 14:42:15 | a dry run, 4 s; then libc6 alone, until 14:42:33 |
+| 14:43:07 | its main install, until 14:54:37; obsolete packages removed by 14:55:21 |
+| 14:55:26 | apt's sources moved to the deb822 format; the upgrader ends |
+
+From the apt check to the end of the upgrader took 27 minutes, then a reboot
+and the check.
+
+**`do-release-upgrade`'s own lines are not in the step's output.** It printed
+"Checking for a new Ubuntu release" and checked the upgrader's signature, but
+none of that reached the log. Once the check passes, it replaces itself with
+the upgrader (`os.execv`, read in `DistUpgradeFetcherCore.py`, mantic). Python
+drops its unwritten output at that moment. The upgrader runs only after the
+signature check has passed, so the check passed. When it fails,
+`do-release-upgrade` exits normally, and its message does reach the log.
+
+**The upgrader's own logs** (`/var/log/dist-upgrade`, copied off but not kept
+here). At its start, it moved visit 2's logs into a dated subfolder,
+`20261010-1431`, next to visit 1's. Both are identical to the earlier copies.
+The new `main.log` has no ERROR:
+
+- "transition from old-release.u.c to http://gb.archive.ubuntu.com/ubuntu",
+  ten times. The upgrader found 24.04 on the country mirror for the VM's
+  locale (`en_GB`), so all ten apt lines left old-releases, `-security`
+  included. Until now this was read in the source only.
+- `migrateToDeb822Sources()` at the end. The lines now live in
+  `/etc/apt/sources.list.d/ubuntu.sources`, in the deb822 format, not in
+  `/etc/apt/sources.list`.
+- Two WARNINGs, about one config file: "got a conffile-prompt from dpkg for
+  file: '/etc/fwupd/fwupd.conf'", then "replied no". The file had been
+  changed since it was installed, so dpkg asked whether to replace it. The
+  non-interactive frontend kept the machine's version.
+- "Not an UEFI system" and "failed to determine user upgrading" again. The
+  snaps were left alone, as in visit 2.
+- Its `uname` line shows the machine was running 23.10's kernel, 6.5.0-44:
+  visit 2's reboot had used its new kernel.
+- Before its download, it found 12.7 GB free on `/` and needed 2.9 GB.
+
+**The step's output** (`release-upgrade-to-24.04-to-24.04.log`, copied off but
+not kept here) has no error that stopped anything:
+
+- dpkg's prompt for `fwupd.conf`, answered `n`: keep the current version.
+- 37 "dpkg: warning: unable to delete old directory '/lib/...'". 24.04's
+  packages moved their files from `/lib` to `/usr/lib`. On this machine `/lib`
+  already points to `/usr/lib`, so the old folders still hold the new files.
+  Two "is the same as several new files" warnings come from the same move.
+- `grub-install success for /dev/sda`: GRUB 2.12 written to the disk. Its
+  menu lists the new kernel, 6.8.0-146.
+- No "Could not execute systemctl" and no snap error this time.
+
+The clean-up removed 42 packages, among them Python 3.11. That was the
+interpreter the engine's service was running on; visit 1 had removed 3.10 the
+same way. The engine was already loaded, so it still reached its reboot, and
+the check ran on 24.04's Python 3.12. `python3-yaml` was upgraded, and
+`python3-jsonschema` kept its version, so the engine can still start visit
+4.

@@ -314,9 +314,10 @@ proactive sweep) live in the MVP.
   the apt check's refusal. On 2026-10-10 Runs B and D ran again with the
   fixes that followed (§16). The engine waited while another program held
   dpkg's lock, then held it through the snapshot, and the apt check named
-  both dead sources. The same day the first two of the four upgrades ran on
-  that VM, one after the other: 22.10 to 23.04 healed in 34 minutes, and
-  23.04 to 23.10 in 20. Remaining: the last two upgrades, then an
+  both dead sources. The same day the first three of the four upgrades ran
+  on that VM, one after the other: 22.10 to 23.04 healed in 34 minutes,
+  23.04 to 23.10 in 20, and 23.10 to 24.04 in 27. Remaining: the last
+  upgrade, an upgrade that fails and is restored, then an
   EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
@@ -350,7 +351,7 @@ proactive sweep) live in the MVP.
 - `schema/procedure.schema.json` — the rulebook for procedures.
 - `candidates/procedures/` — the 22.10 → 26.04 upgrade as four procedures,
   one upgrade each (`release-upgrade-to-23.04`, `-23.10`, `-24.04`,
-  `-26.04`). The first two have healed once each on a VM; the other two have
+  `-26.04`). The first three have healed once each on a VM; the last has
   not run.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
@@ -448,12 +449,24 @@ snapshot took 129 s, and the step's `full-upgrade` had nothing to do. The
 check read 23.10 (`healed`). It took 20 minutes from the apt check to the end
 of the upgrader. The records are in `evidence/ubuntu-22.10-2026-10-10-3.jsonl`.
 
+**The third upgrade ran the same day too,** again with no restore between:
+`release-upgrade-to-24.04`, the first through plain `do-release-upgrade`.
+The snapshot took 124 s, and the step's `full-upgrade` had nothing to do.
+The 24.04 upgrader moved apt off old-releases, to the country mirror for the
+machine's locale, and after the reboot the check read 24.04 (`healed`). It
+took 27 minutes from the apt check to the end of the upgrader. The upgrade
+removed Python 3.11 while the engine's service ran on it, as visit 1 had
+removed 3.10; the engine still reached its reboot. The records are in
+`evidence/ubuntu-22.10-2026-10-10-4.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, `--cancel` after a cut-off, and a wait for
 dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
-have the last two upgrade procedures.
+has the last upgrade procedure. And no real upgrade has failed yet: every
+restore so far undid a test step on a machine that had not really changed.
+A restore from a half-upgraded machine has not been seen.
 
 ---
 
@@ -971,7 +984,10 @@ folder, as expected. No restore has tested the exclude yet.
 
 ---
 
-*Last updated: revision 24 — the second upgrade, 23.04 to 23.10, healed on
+*Last updated: revision 25 — the third upgrade, 23.10 to 24.04, healed on
+the same VM in 27 minutes, and apt left old-releases by itself (2026-10-10);
+§12 and §13 updated, and §13 now says no real upgrade has failed yet.
+Revision 24 — the second upgrade, 23.04 to 23.10, healed on
 the same VM in 20 minutes, with no restore after visit 1 (2026-10-10); §12,
 §13 and §16 updated.
 Revision 23 — the first upgrade, 22.10 to 23.04, healed on the

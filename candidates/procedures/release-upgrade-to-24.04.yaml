@@ -8,9 +8,8 @@
 #
 # From 23.10 the next supported release is 24.04, so this is an ordinary
 # do-release-upgrade. Its upgrader replaces old-releases addresses with the
-# main archive, so apt should move back there by itself (read in the source,
-# not yet seen on a machine). 24.04 is supported until 2029: a good place to
-# pause.
+# main archive, so apt moves back there by itself (seen on the 22.10 VM in
+# visit 3). 24.04 is supported until 2029: a good place to pause.
 id: release-upgrade-to-24.04
 description: Upgrade an end-of-life Ubuntu 23.10 machine in place to 24.04 LTS, the next release (visit 3 of 4)
 symptoms:
@@ -51,4 +50,4 @@ steps:
         do-release-upgrade -f DistUpgradeViewNonInteractive
     timeout_minutes: 360
     reboot_after: true
-source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Never run. Planned: tests/procedure-proof/ on the 22.10 VM first, then the four in order from its repos-fixed snapshot with --take-snapshot."
+source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Healed once on the 22.10 VM (KineticServer, a BIOS server) on 2026-10-10, with --take-snapshot, straight after visit 2 and with no restore between: 23.10 to 24.04 in 27 minutes, apt moved from old-releases to gb.archive.ubuntu.com (evidence/ubuntu-22.10-2026-10-10-4.jsonl). Not yet run on a UEFI desktop."

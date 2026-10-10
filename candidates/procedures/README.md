@@ -15,11 +15,11 @@ there, in a lab slot of 2 to 2.5 hours, and the engine stops when the check
 passes. Ubuntu cannot skip a release, so 23.x is two visits. 24.04 is a
 good place to pause: it is supported until 2029.
 
-**Visits 1 and 2 healed on the 22.10 VM on 2026-10-10**, one after the
-other, with no restore between them. Visit 1 took 34 minutes from the apt
-check to the end of the upgrader (`evidence/ubuntu-22.10-2026-10-10-2.jsonl`),
-and visit 2 took 20 (`evidence/ubuntu-22.10-2026-10-10-3.jsonl`). Visits 3
-and 4 have not run yet.
+**Visits 1 to 3 healed on the 22.10 VM on 2026-10-10**, one after the
+other, with no restore between them. From the apt check to the end of the
+upgrader, visit 1 took 34 minutes (`evidence/ubuntu-22.10-2026-10-10-2.jsonl`),
+visit 2 took 20 (`-3.jsonl`), and visit 3 took 27 (`-4.jsonl`). Visit 4 has
+not run yet.
 
 ```bash
 sudo python3 engine/runner.py --procedures candidates/procedures \
@@ -63,6 +63,9 @@ command again:
 - **A line in `/etc/apt/sources.list`** (such as one for
   `in.old-releases.ubuntu.com`): put a `#` at its start, with
   `sudo nano /etc/apt/sources.list`
+- **From 24.04 on**, Ubuntu's own lines are in
+  `/etc/apt/sources.list.d/ubuntu.sources` instead (the upgrade to 24.04
+  moves them there). To turn one block off, add the line `Enabled: no` to it.
 
 The upgrade turns third-party sources off by itself anyway, so the machine
 loses nothing it would have kept. A source listed twice is only a warning,
@@ -101,14 +104,36 @@ line moved to 23.04 on old-releases, `-security` included. A person running
 the upgrader by hand would have been asked. Visit 2 went the same way for
 23.10.
 
-The 24.04 upgrader replaces old-releases addresses with the main archive. So
-the upgrade to 24.04 should move apt back to the main archive by itself. This
-was read in the source; it has not yet been seen on a machine.
+The 24.04 upgrader replaces old-releases addresses with the main archive, and
+visit 3 showed it. It tries the country mirror for the machine's locale
+first, then `archive.ubuntu.com`. On the VM (`en_GB`) all ten lines moved to
+`gb.archive.ubuntu.com`, `-security` included. At its end it moved them from
+`/etc/apt/sources.list` to `/etc/apt/sources.list.d/ubuntu.sources`, in the
+deb822 format.
+
+## `do-release-upgrade`, visits 3 and 4
+
+Read in its source (23.10 and 24.04). Before it starts the upgrader, it quits
+with exit 1, changing nothing, if:
+
+- `/etc/update-manager/release-upgrades` says `Prompt=never`. (`Prompt=lts`
+  is ignored on a release that is not an LTS.)
+- any update is still waiting to be installed. A held package counts.
+- `/var/run/reboot-required.pkgs` lists a kernel, `linux-base` or `libc6`.
+
+So check each machine first. None of these change anything:
+`do-release-upgrade -c` should say "New release ... available",
+`apt-mark showhold` should print nothing, and
+`cat /var/run/reboot-required.pkgs` should find no file.
+
+Its own messages ("Checking for a new Ubuntu release", the signature check)
+reach the step's log only when it fails. When it succeeds, it replaces itself
+with the upgrader, and Python drops its unwritten output.
 
 ## The upgrader's own checks
 
 Read in the 23.04 upgrader's source, and seen in the `main.log` of visits 1
-and 2:
+to 3:
 
 - **The EFI partition.** On a UEFI machine, the upgrader refuses to start
   unless `/boot/efi` is mounted read-write ("EFI System Partition (ESP) not
@@ -116,7 +141,11 @@ and 2:
   skipped this check ("Not an UEFI system").
 - **Free space.** It works out what each folder needs before it downloads.
   In visit 1 it needed about 1.8 GB on `/`, with 12.2 GB free. In visit 2 it
-  needed 1.2 GB, with 11.6 GB free.
+  needed 1.2 GB, with 11.6 GB free. In visit 3 it needed 2.9 GB, with
+  12.7 GB free.
+  If there is not enough, it stops before downloading, puts the old apt
+  sources back and exits 1; the engine then restores the snapshot. That has
+  not been seen yet.
 - **Who started it.** Running as root, it looks for `SUDO_UID` or
   `PKEXEC_UID`, to ask that user's desktop not to lock the screen. The
   engine's service has neither ("failed to determine user upgrading"). So on
@@ -133,10 +162,13 @@ desktop has more packages, so expect longer.
 Visit 2: 20 minutes. Timeshift was already there, and 23.04 had no pending
 updates. The upgrader took 16, of which about 6 were its download.
 
+Visit 3: 27 minutes. The upgrader took 24, of which about 10 were its
+download (1.3 GB).
+
 The 23.04, 23.10 and 24.04 upgraders install in three passes: a dry run,
 then libc6 alone, then everything else. If the libc6 pass fails, the upgrader
 stops with exit 1, and the engine restores the snapshot. The 26.04 upgrader
-has no libc6 pass. All this was read in their source; visits 1 and 2 showed
+has no libc6 pass. All this was read in their source; visits 1 to 3 showed
 the three passes.
 
 ## No terminal
@@ -145,7 +177,8 @@ Every upgrade runs under the engine's service, with no terminal:
 
 - The upgrader's `DistUpgradeViewNonInteractive`:
   - answers yes to every question
-  - keeps the existing version of any changed config file
+  - keeps the existing version of any changed config file (seen in visit 3,
+    for `/etc/fwupd/fwupd.conf`)
   - does not reboot by itself (`RealReboot=no`); the engine reboots instead
 - `apt-get` gets `--force-confdef`/`--force-confold`, for the same
   config-file choice. It also gets `DEBIAN_FRONTEND=noninteractive`, so

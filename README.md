@@ -120,9 +120,10 @@ mid-step, and the apt check. Two runs were repeated on 2026-10-10. While
 another program held apt's lock, the engine waited for it, then held it
 through the snapshot. Given two dead apt sources, the check named both.
 
-The first two of the four upgrades ran on the VM on 2026-10-10, one after
-the other. 22.10 to 23.04 healed in 34 minutes, and 23.04 to 23.10 in 20.
-The last two have not run yet.
+The first three of the four upgrades ran on the VM on 2026-10-10, one after
+the other. 22.10 to 23.04 healed in 34 minutes, 23.04 to 23.10 in 20, and
+23.10 to 24.04 in 27. The last has not run yet. No real upgrade has failed
+yet, so the restore after one is still untested.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this
