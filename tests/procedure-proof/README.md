@@ -9,7 +9,8 @@ the lock held by another program first (below). Its records are in
 offline too (stubbed machine, no VM; on Python 3.12 and 3.10). These runs
 prove the same machinery on a real machine, with fixtures that take minutes,
 before any real upgrade relies on it. Runs E and F, at the end, fail a real
-upgrade on purpose. They have not run yet.
+upgrade on purpose. **They passed on 2026-10-10**: both ended `rolled_back`.
+Their records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -216,7 +217,8 @@ After these runs comes the upgrade itself: the four procedures in
 Runs A to D fail a test step, on a machine the step has not really changed.
 E and F fail a real upgrade: `release-upgrade-to-26.04`, on the 22.10 VM once
 visits 1 to 3 have brought it to 24.04. `fill-disk.py` fills the root disk
-at the moment each run needs. Not run yet.
+at the moment each run needs. **Both passed on 2026-10-10.** What they
+showed is under "Seen on 2026-10-10" at the end.
 
 | Run | what it proves |
 |-----|----------------|
@@ -296,3 +298,19 @@ Things to know:
   sources back before it exits.
 - **After F, the machine has been restored twice.** Visit 4 can then run on
   it as it is, which is what a lab machine would do after a failed visit.
+
+Seen on 2026-10-10 (notes in `evidence/README.md`):
+
+- Both records as expected: `rolled_back`, `fix_failed`, exit 1, and
+  `ok: back to 24.04 packages:d778793cbf7390c2` both times. No `updates`
+  record: nothing was waiting, so step 1 was skipped.
+- E took 5 minutes from the apt check to the restore. Its upgrader found
+  365 MB free and needed 2,734 MB.
+- F's install had unpacked 140 packages, among them 26.04's `libc6`, when
+  the disk filled. Its step log does stop short, with nine "--- Logging
+  error ---" lines.
+- F's `main.log` has the error twice, 11 seconds apart. The upgrader exited
+  while a dpkg it had started was still running, so the restore began with
+  that dpkg still unpacking. The second error is the upgrader's install
+  process retrying, stopped by the engine's hold on dpkg's frontend lock
+  ("held by process ... (python3)"). DESIGN.md §15 has the open question.

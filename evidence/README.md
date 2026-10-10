@@ -614,3 +614,105 @@ same way. The engine was already loaded, so it still reached its reboot, and
 the check ran on 24.04's Python 3.12. `python3-yaml` was upgraded, and
 `python3-jsonschema` kept its version, so the engine can still start visit
 4.
+
+### `ubuntu-22.10-2026-10-10-5.jsonl`
+
+Runs E and F of `tests/procedure-proof/`: the last upgrade,
+`release-upgrade-to-26.04`, made to fail on purpose on `KineticServer`, now
+on 24.04. A helper, `fill-disk.py`, filled the disk at the moment each run
+needed. The clone was pulled to `584199a`. Before the runs, 24.04 was brought
+fully up to date and rebooted, visit 3's snapshot was deleted, and a
+VirtualBox snapshot, `at-24.04`, was taken. Copied off at 00:08 IST on
+2026-10-11; both runs were on 2026-10-10. The name ends in `-5` because four
+files already have this date.
+
+- Lines 1 to 4 are visit 3's file again, unchanged.
+- Line 5, Run E: `rolled_back`, `failure: fix_failed` (`to-26.04`). The
+  step exited 1. The engine restored its snapshot `2026-10-10_17-53-28`, and
+  after the reboot the machine matched it: `ok: back to 24.04
+  packages:d778793cbf7390c2`.
+- Line 6, Run F: the same outcome, from snapshot `2026-10-10_18-11-25`, with
+  the same fingerprint.
+
+There is no record for step 1, `updates`. Both times its check found nothing
+waiting, so the engine counted the step as done and skipped it. A skipped
+step writes no record. This was the first time that check ran on a machine.
+Its other branch, with updates waiting, has not been seen.
+
+**Run E: the upgrader refuses** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 17:52:50 | the apt check: the four noble sources, on `gb.archive.ubuntu.com` |
+| 17:53:28 | the snapshot: 186 s. A full copy, since visit 3's had been deleted |
+| 17:56:41 | step 2 starts: `do-release-upgrade`. The helper fills the disk, leaving 500 MB for ordinary users |
+| 17:56:50 | the 26.04 upgrader starts (release-upgrader 26.04.25) |
+| 17:57:55 | it finds 365 MB free on `/` and needs 2,734 MB. It refuses: "Not enough free disk space" |
+| 17:57:59 | it has put the apt sources back, and exits 1. The engine starts the restore |
+
+The restore sent 158 MB. It deleted the 26.04 package lists the upgrader had
+fetched, and the helper's fill file. From the apt check to the restore took 5
+minutes. The machine was back on 24.04 before Run F began.
+
+This was the first restore to keep the upgrader's logs (§16 of DESIGN.md).
+Neither restore touched `/var/log/dist-upgrade`, the engine's folders,
+`/boot/efi` or the unit file. Run E's `main.log` still says why it stopped:
+"The upgrade needs a total of 2,734 M free space on disk '/'". Run F's
+upgrader then moved it into a dated folder, `20261010-1812`.
+
+**Run F: the disk fills during the install:**
+
+| time | what |
+|------|------|
+| 18:11:16 | the apt check |
+| 18:11:25 | the snapshot: 41 s, linked to Run E's, which was still there |
+| 18:12:11 | step 2 starts |
+| 18:12:21 | the upgrader starts |
+| 18:13:25 | it finds 11.6 GB free, and needs 2.7 GB. Its download, 1.4 GB, until 18:25:46 |
+| 18:25:47 | a dry run, 3 s |
+| 18:26:12 | dpkg starts the install. A minute in, the helper fills the disk, root's share too |
+| 18:27:15 | dpkg is failing package after package: "No space left on device". The upgrader logs "Could not install the upgrades" |
+| 18:27:18 | it exits 1. The engine frees its reserve and starts the restore |
+| 18:27:19 | a dpkg the upgrader left running ends (below) |
+| 18:27:27 | the upgrader's install process tries again, and finds dpkg's lock held by the engine |
+
+Before the disk filled, dpkg had unpacked 140 packages and set up 55. Among
+them were 26.04's `libc6` and `perl-base`. Then it failed 31 packages in a
+row. So the restore undid a real half-upgrade. It deleted 4,260 files and
+folders the upgrade had added, and rewrote about 7,000 files. After the
+reboot the check matched the fingerprint.
+
+The disk was full when the step failed. The engine freed its 256 MB reserve,
+wrote its state and started Timeshift: the reserve's first use on a machine.
+
+**What Run F found: the install outlived the upgrader.** The upgrader runs
+dpkg from a child process, in a session of its own (`pty.fork()`). Its parent
+copies the child's output to the step's log. On the full disk, one of the
+parent's writes failed. Most likely it was that copy, whose last flush has no
+`try` around it (read in `DistUpgradeViewNonInteractive.py`, resolute). So
+the parent stopped waiting, logged its error and exited 1. The child and its
+dpkg kept going.
+
+The engine saw the exit and started the restore. It waits only for apt's
+frontend lock, and nobody held that any more. dpkg held its other lock,
+`/var/lib/dpkg/lock`. It used the space the engine had just freed to unpack
+four more packages (`friendly-recovery`, `initramfs-tools`,
+`initramfs-tools-core`, `libext2fs2t64`), and ended at 18:27:19, a second
+after Timeshift started. At 18:27:27 the child hit an input/output error,
+most likely printing its own error to the terminal its parent had closed. It
+fell into the upgrader's retry. The retry asked for the frontend lock and
+found it held by "process 1608 (python3)". That is the engine, which holds
+that lock from the start of the restore to the reboot. So the retry installed
+nothing. The child then ran the upgrader's three post-install scripts, in the
+middle of the restore, and stopped.
+
+The restore still came out right. dpkg ended while rsync was most likely
+still listing files, and the check after the reboot matched. But that was
+timing, not design. The engine does not wait for dpkg's inner lock, and
+nothing stops what a failed step leaves running. DESIGN.md §15 has the
+question.
+
+**The logs.** Run F's step log ends with nine "--- Logging error ---" lines:
+the upgrader could not write to the full disk. Its `main.log` has the error
+twice: first the parent's, then the child's. The engine's own messages went
+to the journal, which each restore rolled back.

@@ -318,9 +318,10 @@ proactive sweep) live in the MVP.
   dpkg's lock, then held it through the snapshot, and the apt check named
   both dead sources. The same day the first three of the four upgrades ran
   on that VM, one after the other: 22.10 to 23.04 healed in 34 minutes,
-  23.04 to 23.10 in 20, and 23.10 to 24.04 in 27. Remaining: the last
-  upgrade, an upgrade that fails and is restored, then an
-  EFI desktop VM, finish proving
+  23.04 to 23.10 in 20, and 23.10 to 24.04 in 27. Then the last upgrade was
+  made to fail twice on purpose (Runs E and F). The engine restored 24.04
+  both times, once from a half-upgraded machine with a full disk. Remaining:
+  the last upgrade, then an EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
@@ -353,8 +354,9 @@ proactive sweep) live in the MVP.
 - `schema/procedure.schema.json` — the rulebook for procedures.
 - `candidates/procedures/` — the 22.10 → 26.04 upgrade as four procedures,
   one upgrade each (`release-upgrade-to-23.04`, `-23.10`, `-24.04`,
-  `-26.04`). The first three have healed once each on a VM; the last has
-  not run.
+  `-26.04`). The first three have healed once each on a VM. The last ran
+  twice, made to fail on purpose, and was restored both times. It has not
+  healed yet.
 - `engine/runner.py` — loads, validates, identifies the machine, runs detects,
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
@@ -461,16 +463,26 @@ removed Python 3.11 while the engine's service ran on it, as visit 1 had
 removed 3.10; the engine still reached its reboot. The records are in
 `evidence/ubuntu-22.10-2026-10-10-4.jsonl`.
 
+**Then the last upgrade was made to fail, twice** (Runs E and F in
+`tests/procedure-proof/`, the same evening). A helper filled the disk at the
+chosen moment. In both runs step 1 found no updates waiting and was skipped.
+In Run E the 26.04 upgrader found too little space before its download. It
+refused, put the apt sources back and exited 1. In Run F the disk filled a
+minute into dpkg's install, after 140 packages had been unpacked. The engine
+freed its reserve on the full disk and restored a half-upgraded machine.
+Both runs ended `rolled_back`, with the machine back on 24.04 as it was. Both
+restores left the upgrader's logs in place, and Run E's said why it stopped.
+Run F also found a gap: the upgrader exited while a dpkg it started was still
+running, and that dpkg finished during the first second of the restore
+(§15). The records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, `--cancel` after a cut-off, and a wait for
 dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
-has the last upgrade procedure, now two steps (§16). And no real upgrade has
-failed yet: every restore so far undid a test step on a machine that had not
-really changed. A restore from a half-upgraded machine has not been seen, nor
-the reserve that lets the engine restore on a full disk (§16). Runs E and F
-in `tests/procedure-proof/` are written for both.
+has the last upgrade healed, and its first step has only been skipped: a
+step 1 that installs updates and reboots has not been seen (§16).
 
 ---
 
@@ -503,6 +515,16 @@ the contract everything else plugs into.
   VMs/containers)?
 - What's the very first *real* problem we want fixed end-to-end (fix included,
   not just detected)?
+- What should the engine do with what a failed step leaves running? *Raised
+  by Run F (2026-10-10).* The 26.04 upgrader exited 1 while a dpkg it had
+  started was still unpacking. The engine waits only for dpkg's frontend lock
+  before a restore, and that one was free. So the restore began with dpkg
+  still running, and the upgrader's install process later ran its
+  post-install scripts during the restore. The restore came out right, by
+  timing. *Proposed:* when a step fails, first stop every process still
+  running in the engine's service, other than the engine, and only then free
+  the reserve. Also wait for dpkg's inner lock, `/var/lib/dpkg/lock`, as well
+  as the frontend lock, as apt does.
 
 ---
 
@@ -954,6 +976,8 @@ Seen on the 22.10 VM on 2026-10-10, in Run B again. A second session held the
 lock. The engine waited two tries, took the lock at the next one after it was
 let go, and held it while Timeshift copied: apt, asked for the lock then,
 named the engine's own process. The wait before a restore has not been seen.
+Run F, on 2026-10-10, showed that the frontend lock is not enough there: a
+dpkg the upgrader left running held only the inner lock (§15).
 
 **2026-10-09 — The snapshot is written to disk before step 1.** Timeshift does
 not flush its copy when it finishes (read in 22.06.5), and neither did the
@@ -984,7 +1008,9 @@ folder there, so they are not overwritten either.
 folder, has dpkg's output during the upgrade.
 
 *Seen on 2026-10-10:* visit 2's upgrader moved visit 1's logs into a dated
-folder, as expected. No restore has tested the exclude yet.
+folder, as expected. That evening two restores tested the exclude (Runs E
+and F). Both left the folder alone, and Run E's `main.log` still said why the
+upgrade had stopped: too little free space.
 
 **2026-10-10 — The engine keeps a reserve on the disk while a procedure
 runs.** Before it starts a restore, the engine writes its state: the phase
@@ -1010,8 +1036,10 @@ checks. *Why 256 MB:* the state is a few kilobytes. Timeshift's log and
 rsync's copy of one file at a time need more, and on the lab's machines, with
 about 820 GB free, 256 MB costs nothing. Offline, a step that fills the disk
 now ends `rolled_back`, and with the early free removed the same test fails
-with "No space left on device". Not yet run on a VM: Run F in
-`tests/procedure-proof/` does that.
+with "No space left on device". *Seen on the VM on 2026-10-10,* in Run F of
+`tests/procedure-proof/`. The disk filled a minute into the 26.04 install,
+and dpkg failed package after package. The engine freed the reserve, wrote
+its state and restored, and the check after the reboot passed.
 
 **2026-10-10 — The 26.04 upgrade installs waiting updates and reboots
 first.** `do-release-upgrade` quits with exit 1, before it changes anything,
@@ -1033,12 +1061,19 @@ waiting, step 1 counts as done and is skipped. Both steps require 24.04, so
 step 1 never installs updates on another release. The 24.04 upgrade stays one
 step: 23.10 gets no updates any more, so its `full-upgrade` installs nothing.
 A held package still makes `do-release-upgrade` refuse, so the procedures
-README says to check for one first. Offline: built and passing; not yet run
-on a VM.
+README says to check for one first. On the VM, in Runs E and F on
+2026-10-10, nothing was waiting, and step 1 was skipped both times. A step 1
+that installs updates and reboots has not been seen.
 
 ---
 
-*Last updated: revision 26 — a 256 MB reserve, freed first when a step
+*Last updated: revision 27 — Runs E and F made the 26.04 upgrade fail on
+the VM on purpose (2026-10-10): the upgrader refused for space, then the disk
+filled mid-install. The engine restored 24.04 both times, the second time on
+a full disk, from a half-upgraded machine. Run F also showed a dpkg the
+upgrader left running into the restore's first second; §12, §13, §15 and §16
+updated.
+Revision 26 — a 256 MB reserve, freed first when a step
 fails, so the engine can still restore on a full disk; the 26.04 upgrade
 split into updates and a reboot, then the upgrade (2026-10-10). Built and
 passing offline on Python 3.12 and 3.10, not yet run on a VM; §13 and §16

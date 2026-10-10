@@ -124,8 +124,11 @@ through the snapshot. Given two dead apt sources, the check named both.
 
 The first three of the four upgrades ran on the VM on 2026-10-10, one after
 the other. 22.10 to 23.04 healed in 34 minutes, 23.04 to 23.10 in 20, and
-23.10 to 24.04 in 27. The last has not run yet. No real upgrade has failed
-yet, so the restore after one is still untested.
+23.10 to 24.04 in 27. Then the last upgrade was made to fail twice on
+purpose, with a disk filled up at the chosen moment. First its upgrader
+refused for lack of space. Then the disk filled halfway through its install.
+The engine restored 24.04 both times, the second time on the full disk. The
+last upgrade has not healed yet.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

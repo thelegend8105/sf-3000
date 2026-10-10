@@ -19,8 +19,10 @@ good place to pause: it is supported until 2029.
 **Visits 1 to 3 healed on the 22.10 VM on 2026-10-10**, one after the
 other, with no restore between them. From the apt check to the end of the
 upgrader, visit 1 took 34 minutes (`evidence/ubuntu-22.10-2026-10-10-2.jsonl`),
-visit 2 took 20 (`-3.jsonl`), and visit 3 took 27 (`-4.jsonl`). Visit 4 has
-not run yet.
+visit 2 took 20 (`-3.jsonl`), and visit 3 took 27 (`-4.jsonl`). Visit 4's
+upgrade has not healed yet. The same evening it was made to fail twice on
+purpose, with the disk filled up (Runs E and F in `tests/procedure-proof/`,
+`-5.jsonl`). The engine restored 24.04 both times.
 
 ```bash
 sudo python3 engine/runner.py --procedures candidates/procedures \
@@ -53,6 +55,8 @@ upgrades from, and the engine then names the one that applies.
 - **Keeps room to restore.** While it runs, the engine sets aside 256 MB of
   the disk. If a step fails, it frees that first, so a disk that filled up
   during the upgrade still leaves room to record the failure and restore.
+  Run F showed it: the disk filled halfway through the 26.04 install, and
+  the restore still ran.
 - **Waits after a cut-off.** If the machine goes down mid-upgrade, the boot
   after does not restore by itself. Running the same command again offers the
   restore; `--cancel` leaves the machine as it is.
@@ -153,10 +157,12 @@ to 3:
 - **Free space.** It works out what each folder needs before it downloads.
   In visit 1 it needed about 1.8 GB on `/`, with 12.2 GB free. In visit 2 it
   needed 1.2 GB, with 11.6 GB free. In visit 3 it needed 2.9 GB, with
-  12.7 GB free.
+  12.7 GB free. The 26.04 upgrader needed 2.7 GB, 1.4 GB of it for its
+  download.
   If there is not enough, it stops before downloading, puts the old apt
-  sources back and exits 1; the engine then restores the snapshot. That has
-  not been seen yet.
+  sources back and exits 1; the engine then restores the snapshot. Run E
+  showed this, with 365 MB free: its `main.log` says "The upgrade needs a
+  total of 2,734 M free space on disk '/'".
 - **Who started it.** Running as root, it looks for `SUDO_UID` or
   `PKEXEC_UID`, to ask that user's desktop not to lock the screen. The
   engine's service has neither ("failed to determine user upgrading"). So on
@@ -176,11 +182,14 @@ updates. The upgrader took 16, of which about 6 were its download.
 Visit 3: 27 minutes. The upgrader took 24, of which about 10 were its
 download (1.3 GB).
 
+Visit 4 has not healed yet. In Run F, the 26.04 upgrader's download (1.4 GB)
+took 12 minutes.
+
 The 23.04, 23.10 and 24.04 upgraders install in three passes: a dry run,
 then libc6 alone, then everything else. If the libc6 pass fails, the upgrader
 stops with exit 1, and the engine restores the snapshot. The 26.04 upgrader
 has no libc6 pass. All this was read in their source; visits 1 to 3 showed
-the three passes.
+the three passes, and Run F the 26.04 upgrader's two.
 
 ## No terminal
 
