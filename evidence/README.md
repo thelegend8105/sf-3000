@@ -381,3 +381,76 @@ Err:1 http://sf3000-no-such-host.invalid/ubuntu kinetic InRelease  Could not res
 
 The same log holds the first Run D's output, from 2026-10-09 at 22:03 IST. It
 has the same shape, and the parser names both sources from it too.
+
+### `ubuntu-22.10-2026-10-10-2.jsonl`
+
+Visit 1 of the lab's upgrade: `release-upgrade-to-23.04`, with
+`--take-snapshot`, on `KineticServer`. The machine went from Ubuntu 22.10 to
+23.04, the first real upgrade the engine has run. The VM started from
+`repos-fixed`, restored at 16:26 IST on 2026-10-10 (the time the host made the
+new disk image). The clone was pulled
+to `768cb37`. The automatic updates were left on, as on the lab's machines.
+Copied off at 17:05 IST. The name ends in `-2` because the morning's file
+already has this date.
+
+- Line 1: `installed`. After the y, the engine installed Timeshift with apt:
+  196 new packages and 2 upgraded, 87.6 MB in 43 s.
+- Line 2: `healed` (`to-23.04`). The detect read 2210 before. The step exited
+  0 at its first attempt, the engine rebooted, and the check read 2304
+  (23.04, and `dpkg --audit` empty). Snapshot `2026-10-10_11-03-25`.
+
+**The timeline** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 11:00:07 | the apt check: all four kinetic sources on old-releases |
+| 11:01:41 | the y; Timeshift installed by 11:03:23 |
+| 11:03:25 | the first snapshot: 133 s. Nothing held apt's lock, so no wait |
+| 11:05:40 | the step: `apt-get full-upgrade` first, 137 upgraded and 5 new (kernel 5.19.0-46), 493 MB in 3 min 19 s |
+| 11:15:03 | the 23.04 upgrader starts, from `lunar.tar.gz` ("Good signature from Ubuntu Archive Automatic Signing Key (2018)") |
+| 11:17:08 | its download, about 680 MB, until 11:21:51 |
+| 11:22:53 | its main install, until 11:33:09; obsolete packages removed by 11:33:52 |
+
+From the apt check to the end of the upgrader took 34 minutes, then a reboot
+and the check. The person who ran it reported about 30 minutes in all.
+
+**The upgrader's own logs** (`/var/log/dist-upgrade`, copied off but not kept
+here). `main.log` has one ERROR, and it is the expected path:
+
+```
+2026-10-10 11:15:32,880 ERROR No valid mirror found
+```
+
+The upgrader first looked for 23.04 on the main archive and on the country
+mirror (`gb.archive.ubuntu.com`). Both answered 404, so it found no mirror for
+any line. It then asks whether to rewrite `sources.list` anyway. The
+non-interactive frontend answers yes to every question, so it rewrote all ten
+lines, `-security`, `-updates` and `-backports` included, to 23.04 on
+old-releases. A person running the upgrader by hand would have been asked.
+
+Two DEBUG lines the person who ran it asked about. Both were read in the
+upgrader's source (`DistUpgradeController.py`, lunar):
+
+- **"Not an UEFI system".** On a machine that boots with BIOS, as this VM
+  does, the upgrader skips its EFI check. On a UEFI machine, such as the lab's,
+  it checks that `/boot/efi` is mounted read-write, and refuses to upgrade if
+  not ("EFI System Partition (ESP) not usable").
+- **"failed to determine user upgrading".** Running as root, the upgrader
+  looks for `SUDO_UID`, then `PKEXEC_UID`, to find who started it. It uses that
+  user to ask the desktop not to lock the screen during the upgrade. The
+  engine's service has neither, so it skips that. On a desktop, the screen may
+  lock during an upgrade. The upgrade carries on.
+
+**The step's output** (`release-upgrade-to-23.04-to-23.04.log`, copied off but
+not kept here) has no error that stopped anything:
+
+- dpkg removed `cron` "anyway as you requested", because 23.04 splits it into
+  `cron` and `cron-daemon-common`. It installed both straight after.
+- `error: cannot refresh "lxd": snap "lxd" assumes unsupported features:
+  snapd2.75`. The upgrader tried to refresh the `lxd` snap. Today's snap store
+  wants a newer snapd than 23.04's 2.59. The snap keeps its old revision, and
+  the upgrade went on.
+- "Could not execute systemctl" from `deb-systemd-invoke`, after the
+  `multipath-tools` and `snapd` packages: their restarts were refused, such as
+  "Failed to restart snapd.mounts-pre.target: Operation refused". The output
+  itself says one of these "can be safely ignored" (LP: #2035098).

@@ -15,6 +15,10 @@ there, in a lab slot of 2 to 2.5 hours, and the engine stops when the check
 passes. Ubuntu cannot skip a release, so 23.x is two visits. 24.04 is a
 good place to pause: it is supported until 2029.
 
+**Visit 1 healed on the 22.10 VM on 2026-10-10**, in 34 minutes from the apt
+check to the end of the upgrader (`evidence/ubuntu-22.10-2026-10-10-2.jsonl`).
+Visits 2 to 4 have not run yet.
+
 ```bash
 sudo python3 engine/runner.py --procedures candidates/procedures \
      --run release-upgrade-to-23.04 --take-snapshot   # visit 1; asks first
@@ -87,11 +91,39 @@ supported release is 24.04, and from 24.04 it is 26.04 (LTS to LTS).
 
 ## Old-releases
 
-The 23.04 and 23.10 upgraders keep a source on old-releases when their target
-release is not on the main archive (they test the archive first). The 24.04
-upgrader replaces old-releases addresses with the main archive. So the
-upgrade to 24.04 should move apt back to the main archive by itself. This was
-read in the source; it has not yet been seen on a machine.
+The 23.04 and 23.10 upgraders look for their release on the main archive and
+on a country mirror first. In visit 1 both answered 404 for 23.04, so the
+upgrader logged `ERROR No valid mirror found` and asked whether to rewrite
+`sources.list` anyway. The non-interactive frontend answers yes, so every
+line moved to 23.04 on old-releases, `-security` included. A person running
+the upgrader by hand would have been asked.
+
+The 24.04 upgrader replaces old-releases addresses with the main archive. So
+the upgrade to 24.04 should move apt back to the main archive by itself. This
+was read in the source; it has not yet been seen on a machine.
+
+## The upgrader's own checks
+
+Read in the 23.04 upgrader's source, and seen in visit 1's `main.log`:
+
+- **The EFI partition.** On a UEFI machine, the upgrader refuses to start
+  unless `/boot/efi` is mounted read-write ("EFI System Partition (ESP) not
+  usable"). The lab's machines are UEFI. The VM boots with BIOS, so it
+  skipped this check ("Not an UEFI system").
+- **Free space.** It works out what each folder needs before it downloads.
+  In visit 1 it needed about 1.8 GB on `/`, with 12.2 GB free.
+- **Who started it.** Running as root, it looks for `SUDO_UID` or
+  `PKEXEC_UID`, to ask that user's desktop not to lock the screen. The
+  engine's service has neither ("failed to determine user upgrading"). So on
+  a desktop the screen may lock during the upgrade. The upgrade carries on.
+
+## How long
+
+Visit 1 on the VM (a server, 1 CPU): 34 minutes from the apt check to the end
+of the upgrader. Timeshift's install took about 2 minutes, and the first
+snapshot 2 minutes. `full-upgrade` installed 22.10's 137 pending updates in
+9 minutes. The upgrader took 19, of which about 5 were its download. A
+desktop has more packages, so expect longer.
 
 ## No terminal
 

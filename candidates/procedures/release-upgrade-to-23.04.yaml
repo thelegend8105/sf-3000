@@ -62,4 +62,4 @@ steps:
         ./lunar --mode=server --frontend=DistUpgradeViewNonInteractive
     timeout_minutes: 360
     reboot_after: true
-source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Never run. Planned: tests/procedure-proof/ on the 22.10 VM first, then the four in order from its repos-fixed snapshot with --take-snapshot."
+source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Healed once on the 22.10 VM (KineticServer, a BIOS server) on 2026-10-10, from its repos-fixed snapshot with --take-snapshot: 22.10 to 23.04 in 34 minutes (evidence/ubuntu-22.10-2026-10-10-2.jsonl). Not yet run on a UEFI desktop."
