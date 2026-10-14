@@ -326,8 +326,9 @@ proactive sweep) live in the MVP.
   showed a dpkg left running into the restore; the fix passed Run G on
   2026-10-11. On 2026-10-14 the last upgrade ran for real and was restored:
   unattended-upgrades held dpkg's lock, and the upgrader said so only in its
-  own log (§16). Remaining:
-  the last upgrade, then an EFI desktop VM, finish proving
+  own log (§16). It ran again that evening (Run H) and healed, so all four
+  upgrades have now healed on that VM. Remaining: the upgrades on an EFI
+  desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
@@ -503,14 +504,27 @@ output, so a held lock makes the engine wait (§16). The engine's snapshot was
 its first incremental one, 52 seconds. The records are in
 `evidence/ubuntu-22.10-2026-10-14.jsonl`.
 
+**Visit 4 healed that evening, at its second try** (Run H in
+`tests/procedure-proof/`). A second session held dpkg's lock on purpose,
+from the end of the snapshot, for 100 seconds. It was meant to meet the
+upgrader, but it met step 1. Ubuntu had published security updates since
+the updates were installed by hand, so step 1 was not skipped. Its
+`full-upgrade` found the lock held twice. The engine waited a minute each
+time and ran the step again, and the third attempt installed the 6 updates
+(`fix_attempts: 3`). That was the first wait and retry seen on a real
+machine. Then the upgrader ran at its first attempt: 24.04 to 26.04 in 24
+minutes, kernel 7.0 and Python 3.14 (`healed`). The box before the y had
+said step 1 was done: it is worked out before the apt check, from apt's lists
+as they were. The records are in `evidence/ubuntu-22.10-2026-10-14-2.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
 that fails after its reboot, and `--cancel` after a cut-off. A wait for
 dpkg's lock before a restore shows only in visit 4's timing, not in a log.
-Nor has the last upgrade healed, nor a step waited out a lock that only the
-upgrader's log names (§16, 2026-10-14). Nor has a real upgrade's leftover
-been stopped: Run G's was the test procedure's.
+Nor has a step waited out a lock that only the upgrader's log names (§16,
+2026-10-14): in Run H the lock met apt-get instead. Nor has a real
+upgrade's leftover been stopped: Run G's was the test procedure's.
 
 ---
 
@@ -1164,12 +1178,22 @@ from the VM. Each waits twice, then heals, with no restore. A lock that never
 frees ends `blocked`, and the step as it was still restores, as on the VM.
 Passing on Python 3.12 and 3.10. The steps' shell lines were also run under
 `sh` against a stand-in upgrader: a lock line from this run was shown, an old
-log was not, and the exit code was kept. Not yet run on a VM: Run H of
-`tests/procedure-proof/` holds the lock on purpose.
+log was not, and the exit code was kept. *On the VM the same evening,* in
+Run H of `tests/procedure-proof/`, a lock held on purpose met step 1's
+`apt-get full-upgrade` instead of the upgrader. Security updates published
+since the updates were installed by hand made step 1 run. The engine waited
+twice, then the step healed, and the upgrader ran at its first attempt and
+healed too. So the changed command ran on the VM, but the part that prints
+the log, which runs only when the upgrader fails, did not.
 
 ---
 
-*Last updated: revision 30 — visit 4 ran on the VM (2026-10-14) and was
+*Last updated: revision 31 — Run H (2026-10-14): visit 4 healed on the VM at
+its second try, 24.04 to 26.04, so all four upgrades have healed there. The
+lock held on purpose met step 1's apt-get, not the upgrader: a step's wait
+and retry was seen on a real machine for the first time, and the upgrader's
+printed log is still proven only offline; §12, §13 and §16 updated.
+Revision 30 — visit 4 ran on the VM (2026-10-14) and was
 restored: unattended-upgrades held dpkg's lock at the boot after step 1, and
 the upgrader said so only in its own log. Each upgrade step now prints that
 log when the upgrader fails, so a held lock makes the engine wait. Built and

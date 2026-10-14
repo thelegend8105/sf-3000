@@ -463,3 +463,15 @@ straight through. That still heals visit 4, but proves nothing about the
 lock. If the run ends `rollback_failed`, or the VM does not come back, copy
 what logs you can, power the VM off, and ask before
 `E:\VirtualBox\VBoxManage.exe snapshot KineticServer restore at-24.04`.
+
+**What happened, 2026-10-14** (`evidence/ubuntu-22.10-2026-10-14-2.jsonl`,
+lines 10 and 11). Visit 4 healed, but the lock met step 1, not the upgrader.
+Ubuntu published security updates between the hand-run `full-upgrade` and
+the run, and the engine's apt check fetched them. So step 1 was not skipped:
+its check read 6. Its `full-upgrade` met the held lock twice. The engine
+waited a minute each time, and the third attempt installed the updates and
+rebooted (`updates` `healed`, `fix_attempts: 3`). That was the first wait
+and retry seen on a real machine. By then the holder had let go. So the
+upgrader ran at its first attempt and healed (`to-26.04` `healed`,
+`fix_attempts: 1`, `verify_after: 2604`). The upgrader's log, printed when
+it fails, has still been proven only offline.

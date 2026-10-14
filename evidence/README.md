@@ -817,3 +817,60 @@ DESIGN.md §16, 2026-10-14.
   waits for dpkg's lock, which unattended-upgrades still held. The journal
   that would say so was rolled back by the restore, so this rests on the
   timing alone.
+
+### `ubuntu-22.10-2026-10-14-2.jsonl`
+
+Run H of `tests/procedure-proof/`: visit 4 again, on `KineticServer`, on
+24.04 as visit 4's restore left it. The clone was pulled to `5a47978`. The
+waiting updates were installed by hand first, and the VM rebooted, so that
+step 1 would be skipped. A second session took dpkg's frontend lock the
+moment the snapshot ended, and held it for 100 s. Copied off at 19:39 IST,
+with the upgrader's logs (`logs/kinetic-run-h-dist-upgrade/`).
+
+- Lines 1 to 9 are the 2026-10-14 file again, unchanged.
+- Line 10: `updates` `healed`, `fix_attempts: 3`. Its check read 6 before
+  and 0 after its reboot. Snapshot `2026-10-14_13-38-21`.
+- Line 11: `to-26.04` `healed`, `fix_attempts: 1`, `verify_after: 2604`.
+
+**The timeline** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 13:38:05 | `--run` |
+| 13:38:09 | the apt check. It fetched a new noble-security index |
+| 13:38:21 | the snapshot: 64 s, "Linking from snapshot: 2026-10-14_11-38-22" |
+| 13:39:30 | step 1: its check reads 6. `apt-get update` runs, then `full-upgrade` finds the lock "held by process 1572 (python3)" |
+| 13:40:34 | the second attempt: the lock is still held |
+| 13:41:39 | the third attempt: 6 upgraded (openssh, bind9), 2 deferred by phasing; then the reboot |
+| 13:42:36 | the boot after: step 1's check reads 0, and step 2 begins |
+| 13:42:44 | the upgrader (`26.04.27`) starts. Its download ends at 13:52:50 |
+| 14:06:43 | the install is done. The engine reboots, and the check after reads 2604 |
+
+**Why the lock met step 1, not the upgrader.** Ubuntu published security
+updates for openssh and bind9 between the hand-run `full-upgrade` and the
+run. The engine's apt check fetched them. So step 1's check read 6, and step
+1 ran. Its `full-upgrade` met the held lock. By the time step 2 began, the
+second session had let go.
+
+The box that asks for the y is worked out before the apt check
+(`start_procedure`), from apt's lists as they were. So it could not show
+those updates. It counted 1 step and 1 reboot, and 2 of each ran. Nothing
+went wrong because of it: each step runs its own check when its turn comes.
+Only visit 4's step 1 has a check that reads apt's lists, so only visit 4
+can meet this.
+
+**What it shows.**
+
+- Visit 4 healed: 24.04 to 26.04, with kernel 7.0.0-38 and Python 3.14. So
+  all four upgrades have now healed on this VM, one visit at a time. Visit 4
+  needed two tries. The upgrader took 24 minutes: 9 of download, then 14 of
+  install.
+- A step waited out a held lock, then healed, for the first time on a real
+  machine. The engine saw apt's own lock message, waited a minute, and ran
+  the step again, twice. Before this, only `blocked` had been seen, on
+  2026-09-09, from a `--fix`, which does not retry.
+- Not shown: the upgrader meeting a held lock. The upgrade step's new
+  command ran, but the upgrader succeeded, so the part that prints its log
+  on a failure was skipped. That part has passed only offline (DESIGN.md
+  §16, 2026-10-14).
+- A second incremental snapshot: 64 s, linked to visit 4's.

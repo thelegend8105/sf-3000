@@ -19,10 +19,16 @@ good place to pause: it is supported until 2029.
 **Visits 1 to 3 healed on the 22.10 VM on 2026-10-10**, one after the
 other, with no restore between them. From the apt check to the end of the
 upgrader, visit 1 took 34 minutes (`evidence/ubuntu-22.10-2026-10-10-2.jsonl`),
-visit 2 took 20 (`-3.jsonl`), and visit 3 took 27 (`-4.jsonl`). Visit 4's
-upgrade has not healed yet. The same evening it was made to fail twice on
-purpose, with the disk filled up (Runs E and F in `tests/procedure-proof/`,
-`-5.jsonl`). The engine restored 24.04 both times.
+visit 2 took 20 (`-3.jsonl`), and visit 3 took 27 (`-4.jsonl`). The same
+evening visit 4 was made to fail twice on purpose, with the disk filled up
+(Runs E and F in `tests/procedure-proof/`, `-5.jsonl`). The engine restored
+24.04 both times.
+
+**Visit 4 healed on 2026-10-14, at its second try.** The first try was
+restored: unattended-upgrades held dpkg's lock when the upgrade began
+(`ubuntu-22.10-2026-10-14.jsonl`). The second took 29 minutes from the apt
+check to the end of the upgrader (Run H, `-14-2.jsonl`). That includes step
+1's updates and reboot, and 2 minutes waiting out a lock held on purpose.
 
 ```bash
 sudo python3 engine/runner.py --procedures candidates/procedures \
@@ -187,8 +193,10 @@ updates. The upgrader took 16, of which about 6 were its download.
 Visit 3: 27 minutes. The upgrader took 24, of which about 10 were its
 download (1.3 GB).
 
-Visit 4 has not healed yet. In Run F, the 26.04 upgrader's download (1.4 GB)
-took 12 minutes.
+Visit 4: 29 minutes, at its second try (Run H). The snapshot took 1 minute.
+Step 1 installed 6 updates and rebooted in about 3 minutes, 2 of them spent
+waiting out a lock held on purpose. The upgrader took 24, of which about 9
+were its download. In Run F, its download (1.4 GB) took 12 minutes.
 
 The 23.04, 23.10 and 24.04 upgraders install in three passes: a dry run,
 then libc6 alone, then everything else. If the libc6 pass fails, the upgrader
