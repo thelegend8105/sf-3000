@@ -45,6 +45,12 @@ steps:
     expect:
       predicate: greater_than
       value: 2303
+    # The upgrader's non-interactive view says why it stopped only in its own
+    # log, /var/log/dist-upgrade/main.log. On the VM (visit 4, 2026-10-14) it
+    # stopped because unattended-upgrades held dpkg's lock, and the engine,
+    # seeing only "exit 1", restored. So on a failure the step prints the end
+    # of that log, if this run wrote it. A lock message there makes the engine
+    # wait and try again, as it does for apt, instead of restoring.
     run:
       ubuntu: |-
         set -e
@@ -59,7 +65,14 @@ steps:
         done
         gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg lunar.tar.gz.gpg lunar.tar.gz
         tar -xzf lunar.tar.gz
-        ./lunar --mode=server --frontend=DistUpgradeViewNonInteractive
+        touch /run/sf3000-upgrade-start
+        ./lunar --mode=server --frontend=DistUpgradeViewNonInteractive || {
+          rc=$?
+          if [ /var/log/dist-upgrade/main.log -nt /run/sf3000-upgrade-start ]; then
+            tail -n 30 /var/log/dist-upgrade/main.log
+          fi
+          exit $rc
+        }
     timeout_minutes: 360
     reboot_after: true
-source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Healed once on the 22.10 VM (KineticServer, a BIOS server) on 2026-10-10, from its repos-fixed snapshot with --take-snapshot: 22.10 to 23.04 in 34 minutes (evidence/ubuntu-22.10-2026-10-10-2.jsonl). Not yet run on a UEFI desktop."
+source: "CANDIDATE - NOT VETTED. Written 2026-10-07 from the upgraders' source (update-manager, ubuntu-release-upgrader: branches kinetic, lunar, mantic, noble) and changelogs.ubuntu.com/meta-release, checked that day. Split on 2026-10-08 into one procedure per upgrade, so each lab visit runs one with the person there. Healed once on the 22.10 VM (KineticServer, a BIOS server) on 2026-10-10, from its repos-fixed snapshot with --take-snapshot: 22.10 to 23.04 in 34 minutes (evidence/ubuntu-22.10-2026-10-10-2.jsonl). Since 2026-10-14 the step prints the upgrader's log when the upgrader fails, so a held dpkg lock makes the engine wait (DESIGN.md §16); that change has not yet run on a VM. Not yet run on a UEFI desktop."

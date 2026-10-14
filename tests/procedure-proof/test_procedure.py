@@ -104,6 +104,25 @@ APT_UPDATE = {
     "timeout": (None, "Get:1 http://old-releases.ubuntu.com/ubuntu kinetic InRelease\n"),
 }
 
+# The release upgrader beaten to dpkg's lock, word for word from visit 4 on the
+# VM (2026-10-14): all its own output, then the end of its log,
+# /var/log/dist-upgrade/main.log. Only the log names the lock.
+UPGRADER_OUTPUT = (
+    "/usr/lib/python3/dist-packages/DistUpgrade/DistUpgradeFetcherCore.py:237: "
+    "Warning: W:Download is performed unsandboxed as root as file "
+    "'resolute.tar.gz.gpg' couldn't be accessed by user '_apt'. - pkgAcquire::Run "
+    "(13: Permission denied)\n  result = fetcher.run()\n")
+UPGRADER_LOG_LOCKED = (
+    "2026-10-14 11:43:43,042 DEBUG failed to lock the cache, retrying (21)\n"
+    "2026-10-14 11:43:43,042 ERROR Cache can not be locked (E:Could not get lock "
+    "/var/lib/dpkg/lock-frontend. It is held by process 1019 (unattended-upgr), "
+    "W:Be aware that removing the lock file is not a solution and may break your "
+    "system., E:Unable to acquire the dpkg frontend lock "
+    "(/var/lib/dpkg/lock-frontend), is another process using it?)\n"
+    "2026-10-14 11:43:43,042 ERROR Unable to get exclusive lock This usually means "
+    "that another package management application (like apt-get or aptitude) is "
+    "already running. Please close that application first. (None)\n")
+
 
 class Rebooted(Exception):
     """Timeshift's `reboot -f`, or a power cut: the process just stops."""
@@ -268,6 +287,11 @@ class Sim:
         if result == "fail-after-change":
             self.machine["packages"] += 1     # got partway, then broke
             return 1, "E: dpkg was interrupted"
+        if result == "upgrader-locked":
+            # It changed nothing. The step's output names the lock only if the
+            # step prints the upgrader's log when it fails.
+            shows_log = "tail -n 30 /var/log/dist-upgrade/main.log" in cmd
+            return 1, UPGRADER_OUTPUT + (UPGRADER_LOG_LOCKED if shows_log else "")
         return 1, "E: something broke"
 
     def apply(self, key):
@@ -1124,6 +1148,44 @@ with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
     check("no restore for a step that changed nothing", "restore" in sim.events, False)
     check("state failed, service removed",
           (sim.state()["phase"], runner.PROCEDURE_UNIT_PATH.exists()), ("failed", False))
+
+print("\nThe upgrader beaten to dpkg's lock: every upgrade step shows why, so it waits too")
+# Visit 4 on the VM, 2026-10-14: unattended-upgrades held dpkg's lock at the
+# boot after step 1. The upgrader gave up after 2 s and said why only in its
+# own log, so the engine saw "exit 1" and restored. Each upgrade step now
+# prints the end of that log when the upgrader fails.
+for pid, key, codename in [("release-upgrade-to-23.04", "lunar", "kinetic"),
+                           ("release-upgrade-to-23.10", "mantic", "lunar"),
+                           ("release-upgrade-to-24.04", "noble", "mantic"),
+                           ("release-upgrade-to-26.04", "resolute", "noble")]:
+    with tempfile.TemporaryDirectory() as td, Sim(td, codename=codename) as sim:
+        sim.step_results[key] = ["upgrader-locked", "upgrader-locked"]
+        sim.start(*UPGRADES[pid])
+        sim.boot_until_stopped()
+        r = sim.records()[-1]
+        check(f"{pid}: waited twice, healed on the third attempt, nothing restored",
+              (r["outcome"], r["fix_attempts"],
+               sim.events.count(f"sleep {runner.BLOCKED_WAIT}"), "restore" in sim.events),
+              ("healed", 3, 2, False))
+with tempfile.TemporaryDirectory() as td, Sim(td, codename="noble") as sim:
+    runner.BLOCKED_RETRIES = 3
+    sim.step_results["resolute"] = ["upgrader-locked"] * 3
+    sim.start(*P26)
+    sim.boot_until_stopped()
+    r = sim.records()[-1]
+    check("busy through every attempt: blocked, and nothing restored",
+          (r["outcome"], r["fix_attempts"], "restore" in sim.events), ("blocked", 3, False))
+with tempfile.TemporaryDirectory() as td, Sim(td, codename="noble") as sim:
+    # The step as it ran on 2026-10-14, before it printed the log.
+    before = copy.deepcopy(P26[0])
+    before["steps"][1]["run"]["ubuntu"] = (
+        "set -e\nexport DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 "
+        "RELEASE_UPGRADER_NO_SCREEN=1\ndo-release-upgrade -f DistUpgradeViewNonInteractive")
+    sim.step_results["resolute"] = ["upgrader-locked"]
+    sim.start(before, P26[1])
+    sim.boot_until_stopped()
+    check("the step as it was on 2026-10-14: the same failure was restored, as on the VM",
+          (sim.outcomes(), "restore" in sim.events), ([("to-26.04", "rolled_back")], True))
 
 print("\nThe restore itself goes wrong")
 with tempfile.TemporaryDirectory() as td, Sim(td) as sim:

@@ -324,7 +324,9 @@ proactive sweep) live in the MVP.
   made to fail twice on purpose (Runs E and F). The engine restored 24.04
   both times, once from a half-upgraded machine with a full disk. Run F
   showed a dpkg left running into the restore; the fix passed Run G on
-  2026-10-11. Remaining:
+  2026-10-11. On 2026-10-14 the last upgrade ran for real and was restored:
+  unattended-upgrades held dpkg's lock, and the upgrader said so only in its
+  own log (§16). Remaining:
   the last upgrade, then an EFI desktop VM, finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
@@ -489,14 +491,26 @@ once and passed its check (`rolled_back`). Before the snapshot, a second
 session held dpkg's own lock, and the snapshot began only after it let go.
 The records are in `evidence/ubuntu-22.10-2026-10-11.jsonl`.
 
+**Visit 4, the last upgrade, ran on 2026-10-14 and did not heal.** Step 1
+installed 18 updates, a kernel among them, rebooted, and its check read 0:
+the first step 1 to install anything. Step 2 began at the boot after.
+unattended-upgrades held dpkg's lock then: its timer was catching up after
+four days with the VM off. The upgrader gave up on the lock within 2 seconds
+and said why only in its own log. The engine saw "exit 1" and restored 24.04,
+step 1's updates too (`rolled_back`). The restore was needless, though it
+came out right. Since then a failed upgrader's log is shown in the step's
+output, so a held lock makes the engine wait (§16). The engine's snapshot was
+its first incremental one, 52 seconds. The records are in
+`evidence/ubuntu-22.10-2026-10-14.jsonl`.
+
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
-that fails after its reboot, `--cancel` after a cut-off, and a wait for
-dpkg's lock before a restore (the wait was seen before a snapshot only). Nor
-has the last upgrade healed, and its first step has only been skipped: a
-step 1 that installs updates and reboots has not been seen (§16). Nor has a
-real upgrade's leftover been stopped: Run G's was the test procedure's.
+that fails after its reboot, and `--cancel` after a cut-off. A wait for
+dpkg's lock before a restore shows only in visit 4's timing, not in a log.
+Nor has the last upgrade healed, nor a step waited out a lock that only the
+upgrader's log names (§16, 2026-10-14). Nor has a real upgrade's leftover
+been stopped: Run G's was the test procedure's.
 
 ---
 
@@ -1117,9 +1131,51 @@ ended, then passed its check. Before the snapshot, a second session held
 dpkg's own lock, and the snapshot began only after it let go. The leftover
 was the test procedure's: a real upgrader's has not been stopped yet.
 
+**2026-10-14 — An upgrade step shows the upgrader's own log when it fails,
+so a held dpkg lock makes the engine wait instead of restoring.** Visit 4 on
+the VM failed at once. unattended-upgrades held dpkg's lock at the boot after
+step 1: the VM had been off for four days, and its timer caught up. The
+upgrader tried the lock 21 times in 2 seconds, gave up and exited 1. Its
+non-interactive view writes why only to `/var/log/dist-upgrade/main.log`.
+The step's output said nothing about a lock, so the engine read a failed
+upgrade and restored (`rolled_back`). The restore was needless.
+
+The engine already handles a held lock. When a step's output matches
+`LOCK_CONTENTION_PATTERNS`, it waits a minute and runs the step again, up to
+30 times. If the lock never frees, the outcome is `blocked`, with no restore,
+because nothing ran. Only the message was missing. So each of the four
+upgrade steps now touches a stamp file in `/run` before the upgrader. If the
+upgrader fails, the step prints the last 30 lines of its log, when that log
+is newer than the stamp, then exits with the upgrader's code. That changes
+vetted commands, a §4 edit, and was approved as one.
+
+*Why print the log, not change the engine:* the engine keeps one rule, that
+the message decides (2026-09-08). The procedure knows where its tool writes.
+*Why only a log this run wrote:* when the upgrader fails before it writes
+one, the log left there is an old run's, and may hold an old lock message.
+Read as busy, it would send the engine into 30 minutes of retries for the
+wrong reason. *Why a retry is safe:* the upgrader takes dpkg's lock when it
+opens its package cache, before it installs anything. *Why not stop
+unattended-upgrades:* waiting covers it and every other holder, the Software
+Updater and a person's apt too, and leaves the machine's settings alone.
+
+Offline: a check per upgrade replays the upgrader's real output and log lines
+from the VM. Each waits twice, then heals, with no restore. A lock that never
+frees ends `blocked`, and the step as it was still restores, as on the VM.
+Passing on Python 3.12 and 3.10. The steps' shell lines were also run under
+`sh` against a stand-in upgrader: a lock line from this run was shown, an old
+log was not, and the exit code was kept. Not yet run on a VM: Run H of
+`tests/procedure-proof/` holds the lock on purpose.
+
 ---
 
-*Last updated: revision 29 — Run G proved revision 28's fix on the VM
+*Last updated: revision 30 — visit 4 ran on the VM (2026-10-14) and was
+restored: unattended-upgrades held dpkg's lock at the boot after step 1, and
+the upgrader said so only in its own log. Each upgrade step now prints that
+log when the upgrader fails, so a held lock makes the engine wait. Built and
+passing offline on Python 3.12 and 3.10, not yet run on a VM; §12, §13 and
+§16 updated.
+Revision 29 — Run G proved revision 28's fix on the VM
 (2026-10-11): a failed step's leftover, holding dpkg's own lock, was stopped
 before the restore and named in the record, and the engine waited for
 dpkg's own lock before its snapshot; §12, §13 and §16 updated.

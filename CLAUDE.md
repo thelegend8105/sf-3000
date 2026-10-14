@@ -118,8 +118,10 @@ The offline tests prove branch logic only. "Proven" means seen on a real
 machine, with the record in `evidence/`.
 
 - The test machines are VirtualBox VMs on this Windows host
-  (`E:\VirtualBox\VBoxManage.exe`). Each has SSH on a localhost port: 2222 is
-  26.04, 2223 is 22.10. The tracker's "Ubuntu versions" sheet lists them all.
+  (`E:\VirtualBox\VBoxManage.exe`). Each has SSH on a localhost port. 2222 is
+  26.04. 2223 is KineticServer, installed as 22.10. The upgrade visits move it
+  up a release at a time, so confirm its release before handing over a run.
+  The tracker's "Ubuntu versions" sheet lists them all.
 - **The user runs the VMs.** Do not SSH into one or drive it from a tool call.
   Hand over exact commands, each with a sentence saying what it does and why,
   and let the user report back. Read-only VBoxManage queries from the host are
@@ -130,8 +132,8 @@ machine, with the record in `evidence/`.
 - Restoring a VM snapshot deletes the VM's run log. Copy the log into
   `evidence/` first. Copy it verbatim, never edit it, and follow the naming in
   `evidence/README.md`.
-- Each VM-test folder in `tests/` has a README with the exact steps and the
-  records to expect.
+- Each VM test has a README with the exact steps and the records to expect.
+  rollback-proof's steps are in `tests/branch-proof/README.md`.
 
 ## Keeping the docs in step
 
@@ -145,6 +147,8 @@ these that it touches:
   real VM run.
 - The playbook's `source:` line, which says where it was tested.
 - `evidence/README.md`, for each new evidence file.
+- CLAUDE.md, when the change alters something it states: a command, a path,
+  a name the tests patch, or a fact about the VMs.
 
 Run records are in UTC. The project's dates (docs, tracker, commits) are IST,
 UTC+05:30.

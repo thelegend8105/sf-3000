@@ -10,9 +10,11 @@ offline too (stubbed machine, no VM; on Python 3.12 and 3.10). These runs
 prove the same machinery on a real machine, with fixtures that take minutes,
 before any real upgrade relies on it. Runs E and F, at the end, fail a real
 upgrade on purpose. **They passed on 2026-10-10**: both ended `rolled_back`.
-Their records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`. Run G, last,
+Their records are in `evidence/ubuntu-22.10-2026-10-10-5.jsonl`. Run G
 checks the fix for what F found. **It passed on 2026-10-11**; its record is
-in `evidence/ubuntu-22.10-2026-10-11.jsonl`.
+in `evidence/ubuntu-22.10-2026-10-11.jsonl`. Run H, last, runs visit 4 again
+with dpkg's lock held against the real upgrader. It checks the fix for what
+visit 4 found on 2026-10-14. Not yet run.
 
 Two fixtures leave marker files in `/var/lib/sf3000-proof/`.
 
@@ -390,3 +392,74 @@ Seen on 2026-10-11 (notes in `evidence/README.md`):
 - The journal said "the package manager is busy — waiting 60s before the
   snapshot" until the second session let go of dpkg's own lock. The
   snapshot began 2 min 25 s after the apt check. It was a full copy, 158 s.
+
+## Run H: visit 4 again, with dpkg's lock held
+
+Visit 4 on 2026-10-14 failed because unattended-upgrades held dpkg's lock at
+the boot after step 1. The upgrader gave up within 2 seconds and said why
+only in its own log, so the engine restored (lines 8 and 9 of
+`evidence/ubuntu-22.10-2026-10-14.jsonl`). Since then each upgrade step
+prints that log when the upgrader fails (DESIGN.md §16, 2026-10-14). Run H
+holds the lock on purpose against the real upgrader, then lets visit 4 go
+through.
+
+| part | what it proves |
+|------|----------------|
+| the updates installed by hand first | step 1 is skipped, so step 2 runs straight after the snapshot, in this boot |
+| a second session takes dpkg's frontend lock the moment the engine lets go of it, and holds it 100 s | the upgrader is beaten to the lock, as on 2026-10-14 |
+| the journal | "the package manager is busy — waiting 60s, then trying again", and no restore |
+| the end | `to-26.04` `healed`, the machine on 26.04 |
+
+```bash
+# 0. Setup, on the VM as visit 4's restore left it (24.04).
+cd ~/sf-3000 && git pull && git log --oneline -1
+python3 tests/procedure-proof/test_procedure.py | tail -1   # all checks passed
+systemctl is-active apt-daily.service apt-daily-upgrade.service   # both inactive; else wait
+sudo apt-get update && sudo apt-get -y full-upgrade && sudo reboot
+# ssh back in, cd ~/sf-3000:
+apt-get -s full-upgrade | grep -c '^Inst '   # 0: nothing for step 1 (phased updates do not count)
+ls /var/run/reboot-required.pkgs             # No such file
+systemctl is-active apt-daily.service apt-daily-upgrade.service   # both inactive; else wait
+df -h /                                      # at least 7 GB under Avail
+
+# Second session: sudo -v first, so the holder starts at once later. Type the
+# holder but do not press Enter yet:
+sudo python3 -c "import fcntl, os, time; fd = os.open('/var/lib/dpkg/lock-frontend', os.O_RDWR | os.O_CREAT, 0o640); fcntl.lockf(fd, fcntl.LOCK_EX); print('got the lock', time.strftime('%T'), flush=True); time.sleep(100); print('let go', time.strftime('%T'))"
+
+# First session:
+sudo python3 engine/runner.py --procedures candidates/procedures --run release-upgrade-to-26.04 --take-snapshot
+# The box: "1. updates ... already done", "2. to-26.04 ... to do". Answer y.
+journalctl -fu sf3000-procedure
+#   When "taking a Timeshift snapshot" appears, press Enter in the second
+#   session. The holder waits while the engine holds the lock, and prints
+#   "got the lock" the moment the snapshot ends. Then, in the journal:
+#   "to-26.04: ... running", and about 15 s later "the package manager is busy —
+#   waiting 60s, then trying again (attempt 2 of 30)", then "(attempt 3 of
+#   30)". The holder prints "let go". The third attempt downloads (about 12
+#   minutes), installs, and reboots into 26.04.
+# After the reboot:
+python3 engine/runner.py --status    # phase done
+grep VERSION= /etc/os-release; uname -r; python3 --version   # 26.04, a 7.0 kernel, Python 3.14
+python3 -c 'import json; r = [json.loads(l) for l in open("/var/log/sf3000/runs.jsonl")][-1]; print(r["step_id"], r["outcome"], r["fix_attempts"], r["verify_after"])'
+#   to-26.04 healed 3 2604
+grep -c 'Could not get lock' /var/log/sf3000/release-upgrade-to-26.04-to-26.04.log   # 2: the upgrader's log, shown by each failed attempt
+sudo cp -r /var/log/dist-upgrade ~/dist-upgrade-run-h && sudo chown -R rht:rht ~/dist-upgrade-run-h
+
+# Copy the logs off (on Windows, from the repo):
+#   scp -r -P 2223 rht@127.0.0.1:/var/log/sf3000 logs/kinetic-run-h
+#   scp -r -P 2223 rht@127.0.0.1:dist-upgrade-run-h logs/kinetic-run-h-dist-upgrade
+```
+
+Expected: one new record, after visit 4's two.
+
+| Run | step | outcome | what else to check |
+|-----|------|---------|--------------------|
+| H | to-26.04 | `healed` | `fix_attempts: 3`, `verify_after: 2604` |
+
+If "restoring Timeshift snapshot" follows the first failed attempt, the change
+did not work. Let the restore finish, then copy the logs. If no "busy" line
+appears, the holder started too early or too late: the upgrade then runs
+straight through. That still heals visit 4, but proves nothing about the
+lock. If the run ends `rollback_failed`, or the VM does not come back, copy
+what logs you can, power the VM off, and ask before
+`E:\VirtualBox\VBoxManage.exe snapshot KineticServer restore at-24.04`.

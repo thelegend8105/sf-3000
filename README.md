@@ -134,6 +134,13 @@ running by the failed upgrade, into the restore's first second. Since
 2026-10-11 the engine stops such leftovers before it restores. A test run on
 the VM showed it the same night.
 
+The last upgrade ran for real on 2026-10-14, and the engine restored 24.04.
+Its first step installed the waiting updates and rebooted. At the boot after,
+the automatic updates held dpkg's lock, and the upgrader gave up. It said
+why only in its own log, so the engine took it for a failed upgrade. Each
+upgrade step now shows that log when the upgrader fails, so a held lock makes
+the engine wait instead. That has passed offline, not yet on a VM.
+
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this
 machine are reported as `SKIPPED` rather than run. `--os` and `--distro`

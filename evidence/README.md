@@ -761,3 +761,59 @@ The restore sent 22 MB. It deleted the step's marker and its folder.
 
 The leftover was the fixture's, not a real upgrader's. Run F's own case, an
 upgrader's install process outliving it, has not been seen with the fix.
+
+### `ubuntu-22.10-2026-10-14.jsonl`
+
+Visit 4, `release-upgrade-to-26.04`, on `KineticServer`, still on 24.04 as
+Run G left it. The clone was at `01df9d9`. Run G's snapshot was kept, so the
+engine's snapshot was its first incremental one. A waiting kernel was faked
+in `/var/run/reboot-required.pkgs`, so that step 1 would run even if nothing
+else waited. Copied off at 17:20 IST, with the upgrader's logs
+(`logs/kinetic-visit4-dist-upgrade/`).
+
+- Lines 1 to 7 are the 2026-10-11 file again, unchanged.
+- Line 8: `updates` `healed`. Its check read 19 before (18 updates and the
+  faked kernel) and 0 after its reboot. Snapshot `2026-10-14_11-38-22`.
+- Line 9: `to-26.04` `rolled_back`, `failure: fix_failed`, `fix_exit_code:
+  1`, `ok: back to 24.04 packages:d778793cbf7390c2`, the fingerprint of Runs
+  E, F and G. The restore undid step 1's updates too: the snapshot came
+  before step 1.
+
+**The timeline** (UTC; add 05:30 for IST):
+
+| time | what |
+|------|------|
+| 11:37:28 | `--run`, the apt check and the y |
+| 11:38:22 | the snapshot: 52 s, "Linking from snapshot: 2026-10-10_19-40-44" |
+| 11:39:21 | step 1: 11 upgraded, 7 new (kernel 6.8.0-147 among them), 2 deferred by phasing; then the reboot |
+| 11:43:27 | the boot after: step 1's check reads 0, and step 2 begins |
+| 11:43:43 | the upgrader (`26.04.27`) gives up on dpkg's lock after 21 tries in 2 s, and exits 1 |
+| 11:44:43 | the restore begins; it reboots by itself, and the check after it passes |
+
+A record's time is when its step began.
+
+**Why step 2 failed.** The upgrader's `main.log` ends:
+
+    ERROR Cache can not be locked (E:Could not get lock /var/lib/dpkg/lock-frontend.
+      It is held by process 1019 (unattended-upgr), ...)
+    ERROR Unable to get exclusive lock ...
+
+unattended-upgrades had been missed while the VM was off for four days, so
+its timer caught up at the boot after step 1. The step's own output said
+only "exit 1": the non-interactive upgrader writes why it stopped to its log
+alone. So the engine read a failed upgrade and restored, when it should have
+waited. The restore was needless, but it came out right. The fix is in
+DESIGN.md §16, 2026-10-14.
+
+**What else it shows.**
+
+- An incremental engine snapshot works: 52 s, against Run G's full 158 s.
+  With the older snapshot beside it, the engine still found its own, by
+  Timeshift's "Tagged snapshot" line.
+- A step 1 that installs updates and reboots ran for the first time, and its
+  check after the reboot read 0. The two updates held back by phasing did not
+  stop `do-release-upgrade`: it went on to fetch the upgrader.
+- The restore began exactly 60 s after the failure: one of the engine's
+  waits for dpkg's lock, which unattended-upgrades still held. The journal
+  that would say so was rolled back by the restore, so this rests on the
+  timing alone.
