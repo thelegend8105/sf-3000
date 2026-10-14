@@ -514,8 +514,9 @@ time and ran the step again, and the third attempt installed the 6 updates
 (`fix_attempts: 3`). That was the first wait and retry seen on a real
 machine. Then the upgrader ran at its first attempt: 24.04 to 26.04 in 24
 minutes, kernel 7.0 and Python 3.14 (`healed`). The box before the y had
-said step 1 was done: it is worked out before the apt check, from apt's lists
-as they were. The records are in `evidence/ubuntu-22.10-2026-10-14-2.jsonl`.
+said step 1 was done: it was worked out before the apt check, from apt's
+lists as they were. Since then it is worked out again after that check
+(§16). The records are in `evidence/ubuntu-22.10-2026-10-14-2.jsonl`.
 
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
@@ -1186,9 +1187,41 @@ twice, then the step healed, and the upgrader ran at its first attempt and
 healed too. So the changed command ran on the VM, but the part that prints
 the log, which runs only when the upgrader fails, did not.
 
+**2026-10-14 — The box before the y is worked out again after the apt
+check.** In Run H on the VM, the box said visit 4's step 1 was done, and
+counted 1 step and 1 reboot. Then 2 of each ran. The box had been worked out
+before the apt check. That check's `apt-get update` fetched security updates
+published after the updates were installed by hand. Step 1's check counts
+the updates in apt's lists, so when its turn came it found 6, and ran.
+Nothing went wrong: each step runs its own check when its turn comes. But
+the person said y to a plan that was already out of date.
+
+Now the engine asks the machine again after the apt check, and the box shows
+that answer. If the second answer stops the run, the run stops there: a
+check that fails, every step done, or a first step that does not apply.
+
+*Why ask twice:* the first answer comes before the apt check, so a run that
+is refused, or has nothing to do, changes nothing, not even apt's lists.
+Only the second can see what the update brought. *Why only visit 4 can meet
+it:* only its step 1 has a check that reads apt's lists. The other checks
+read the release and dpkg's state, which an update of the lists does not
+change.
+
+Offline: a check replays Run H. Nothing waits before the apt check, the
+update brings 6, and the box shows step 1 to do. Another makes a step's
+check fail after the update: the run stops with exit 1, before the y. And
+each refusal before the apt check is now checked to leave apt's lists alone.
+Passing on Python 3.12 and 3.10. Three deliberate breaks were each caught:
+the old order, a second answer whose refusal is dropped, and the apt check
+moved before the first answer. Not yet run on a VM.
+
 ---
 
-*Last updated: revision 31 — Run H (2026-10-14): visit 4 healed on the VM at
+*Last updated: revision 32 — the box before the y is worked out again after
+the apt check, so it shows what the steps will find (2026-10-14, from Run
+H). Built and passing offline on Python 3.12 and 3.10, not yet run on a VM;
+§13 and §16 updated.
+Revision 31 — Run H (2026-10-14): visit 4 healed on the VM at
 its second try, 24.04 to 26.04, so all four upgrades have healed there. The
 lock held on purpose met step 1's apt-get, not the upgrader: a step's wait
 and retry was seen on a real machine for the first time, and the upgrader's

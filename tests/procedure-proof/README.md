@@ -474,4 +474,7 @@ rebooted (`updates` `healed`, `fix_attempts: 3`). That was the first wait
 and retry seen on a real machine. By then the holder had let go. So the
 upgrader ran at its first attempt and healed (`to-26.04` `healed`,
 `fix_attempts: 1`, `verify_after: 2604`). The upgrader's log, printed when
-it fails, has still been proven only offline.
+it fails, has still been proven only offline. The box had said step 1 was
+already done: it was worked out before the apt check. Since then it is
+worked out again after that check (DESIGN.md §16), so a rerun that meets
+new updates shows step 1 as "to do".

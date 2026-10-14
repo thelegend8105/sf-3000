@@ -1765,6 +1765,33 @@ def confirm_procedure(proc: dict, plan: list, distro: str, snapshot: str,
     return ask_yes("Run this procedure? [y/N] ")
 
 
+def plan_steps(proc: dict):
+    """Ask the machine which steps are already done. Read-only. Returns (plan,
+    None), the plan being (step, done) pairs, or (None, exit code) when --run
+    stops here: a check failed, every step is done, or the first step to do
+    does not apply to this machine."""
+    plan = []
+    for step in proc["steps"]:
+        status, _measurement, detail = assess(step)
+        if status == ERROR:
+            print(f"{MARK['ERROR']} {proc['id']}: the check for step {step['id']} "
+                  f"failed ({detail}). Refusing to run.")
+            return None, 1
+        plan.append((step, status == HEALTHY))
+    first = next((s for s, done in plan if not done), None)
+    if first is None:
+        print(f"{MARK['HEALTHY']} {proc['id']}: every step is already done. "
+              "Nothing to do.")
+        return None, 0
+    if "requires" in first:
+        r_status, _r_measure, r_detail = assess(first["requires"])
+        if r_status != HEALTHY:
+            print(f"{proc['id']}: the first step to do, {first['id']}, does not "
+                  f"apply to this machine ({r_detail}). Refusing to run.")
+            return None, 5
+    return plan, None
+
+
 def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
                     snapshot: str, take_snapshot_too: bool, log_path: Path) -> int:
     """--run: check, confirm, then hand off to the service. Returns an exit code."""
@@ -1823,32 +1850,23 @@ def start_procedure(proc: dict, proc_path: Path, distro: str, host_os: str,
               "between steps.")
         return 6
 
-    # The plan: ask the machine which steps are already done. Read-only.
-    plan = []
-    for step in proc["steps"]:
-        status, _measurement, detail = assess(step)
-        if status == ERROR:
-            print(f"{MARK['ERROR']} {proc['id']}: the check for step {step['id']} "
-                  f"failed ({detail}). Refusing to run.")
-            return 1
-        plan.append((step, status == HEALTHY))
-    first = next((s for s, done in plan if not done), None)
-    if first is None:
-        print(f"{MARK['HEALTHY']} {proc['id']}: every step is already done. "
-              "Nothing to do.")
-        return 0
-    if "requires" in first:
-        r_status, _r_measure, r_detail = assess(first["requires"])
-        if r_status != HEALTHY:
-            print(f"{proc['id']}: the first step to do, {first['id']}, does not "
-                  f"apply to this machine ({r_detail}). Refusing to run.")
-            return 5
+    # The plan comes before the apt check, so a run that stops here changes
+    # nothing, not even apt's lists.
+    plan, code = plan_steps(proc)
+    if code is not None:
+        return code
 
     if apt_available():
         ok, problems = check_apt()
         if not ok:
             report_apt_failure(problems)
             return 9
+        # The update can change what a check reads (visit 4's step 1 counts
+        # the updates in apt's lists), so ask again: the box shows what the
+        # steps will find.
+        plan, code = plan_steps(proc)
+        if code is not None:
+            return code
 
     if not confirm_procedure(proc, plan, distro, snapshot, engine_snap, install):
         log_run({

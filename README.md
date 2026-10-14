@@ -147,6 +147,11 @@ so the lock met that step instead. The engine waited twice, a minute each
 time, then the step healed. That wait had not been seen on a real machine
 before.
 
+The screen before the y had said that first step was already done. It was
+worked out before the engine's apt check, which fetched those updates. Now
+the engine works it out again after that check, so the screen shows what
+the steps will find. That has passed offline, not yet on a VM.
+
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this
 machine are reported as `SKIPPED` rather than run. `--os` and `--distro`

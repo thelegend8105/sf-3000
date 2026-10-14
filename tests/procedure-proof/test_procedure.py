@@ -99,6 +99,15 @@ APT_UPDATE = {
                   "kinetic Release' does not have a Release file.\n"
                   "N: Updating from such a repository can't be done "
                   "securely, and is therefore disabled by default.\n"),
+    # Run H on the VM (2026-10-14): updates published after the person's own
+    # check come in with this update. The harness adds 6 to what waits.
+    "new-updates": (0, "Hit:1 http://gb.archive.ubuntu.com/ubuntu noble InRelease\n"
+                       "Get:3 http://gb.archive.ubuntu.com/ubuntu noble-security "
+                       "InRelease [126 kB]\n"
+                       "Get:5 http://gb.archive.ubuntu.com/ubuntu noble-security/main "
+                       "amd64 Packages [1144 kB]\n"
+                       "Fetched 2491 kB in 4s (672 kB/s)\n"
+                       "Reading package lists...\n"),
     "locked": (100, "E: Could not get lock /var/lib/apt/lists/lock. It is held "
                     "by process 1234 (apt-get)\n"),
     "timeout": (None, "Get:1 http://old-releases.ubuntu.com/ubuntu kinetic InRelease\n"),
@@ -146,11 +155,14 @@ class Sim:
         self.devices = devices
         self.service_active = False
         self.answer = True         # the procedure's y/N
+        self.box = None            # the steps the y/N screen showed: (id, done) pairs
         self.ask_answer = True     # every other y/N
         self.asked = []
         self.events = []
         self.step_results = {}     # step key -> list of results to hand out
         self.apt_updates = []      # apt-get update results to hand out (APT_UPDATE keys)
+        self.updated = False       # apt-get update has run
+        self.check_fails_after_update = False   # then every step check errors
         self.installs = []         # apt-get install results: ok | fail | locked | noop
         self.restore_result = "reboots"   # reboots | exit0 | exit1 | abort
         self.create_ok = True
@@ -182,6 +194,8 @@ class Sim:
         raise AssertionError(f"unknown detect: {cmd}")
 
     def assess(self, pb):
+        if self.check_fails_after_update and self.updated:
+            return runner.ERROR, None, "command failed (exit 100)"
         measurement = self.measure(pb)
         healthy = runner.evaluate(pb, measurement, None)
         return (runner.HEALTHY if healthy else runner.PROBLEM, measurement,
@@ -213,7 +227,10 @@ class Sim:
     def apt_get(self, cmd):
         if "update" in cmd:
             self.events.append("apt-get update")
+            self.updated = True
             result = self.apt_updates.pop(0) if self.apt_updates else "ok"
+            if result == "new-updates":
+                self.machine["pending"] += 6
             return APT_UPDATE[result]
         packages = cmd[cmd.index("install") + 1:]
         self.events.append("apt-get install " + " ".join(packages))
@@ -326,6 +343,11 @@ class Sim:
         self.events.append("systemctl " + " ".join(args))
         return 0
 
+    def confirm(self, proc, plan, *rest):
+        self.events.append("confirm")
+        self.box = [(step["id"], done) for step, done in plan]
+        return self.answer
+
     def reboot(self):
         self.events.append("reboot")
         self.machine["reboot_pending"] = False
@@ -386,7 +408,7 @@ class Sim:
         runner.snapshot_devices = lambda: self.devices
         runner.machine_fingerprint = self.fingerprint
         runner.service_active = lambda: self.service_active
-        runner.confirm_procedure = lambda *a: (self.events.append("confirm"), self.answer)[1]
+        runner.confirm_procedure = self.confirm
         runner.read_cmd = lambda *a: ""
         runner.apt_available = lambda: self.apt
         runner.ask_yes = self.ask
@@ -534,11 +556,11 @@ cases = [
 for label, sim_kw, start_kw, want in cases:
     with tempfile.TemporaryDirectory() as td, Sim(td, **sim_kw) as sim:
         check(label, sim.start(**start_kw), want)
-        check(f"  {label.split(' ->')[0]}: nothing staged, installed, set aside or asked",
-              (staged(sim), [e for e in sim.events if e.startswith("systemctl")],
+        check(f"  {label.split(' ->')[0]}: nothing updated, staged, installed, set aside or asked",
+              (sim.updated, staged(sim), [e for e in sim.events if e.startswith("systemctl")],
                [e for e in sim.events if e.startswith("apt-get install")],
                runner.reserve_path().exists(), "confirm" in sim.events),
-              (False, [], [], False, False))
+              (False, False, [], [], False, False))
 with tempfile.TemporaryDirectory() as td, Sim(td) as sim:
     runner.write_state({"procedure_id": "x", "phase": "rebooting"})
     check("another procedure in progress -> 6", sim.start(), 6)
@@ -760,6 +782,8 @@ print("\nVisit 4: waiting updates installed, and the machine rebooted, before th
 P26 = UPGRADES["release-upgrade-to-26.04"]
 with tempfile.TemporaryDirectory() as td, Sim(td, codename="noble") as sim:
     check("nothing waiting: started", sim.start(*P26), 0)
+    check("  the y/N screen shows step 1 already done", sim.box,
+          [("updates", True), ("to-26.04", False)])
     check("  done after one boot", sim.boot_until_stopped(), 2)
     check("  only the upgrade ran", sim.ran(),
           ["apt-get update", "confirm", "snapshot", "run:resolute", "reboot"])
@@ -787,6 +811,24 @@ with tempfile.TemporaryDirectory() as td, Sim(td, codename="noble") as sim:
           (sim.outcomes(), sim.ran()[3:]),
           ([("updates", "healed"), ("to-26.04", "healed")],
            ["run:updates", "reboot", "run:resolute", "reboot"]))
+with tempfile.TemporaryDirectory() as td, Sim(td, codename="noble") as sim:
+    # Run H on the VM (2026-10-14): nothing waited when the person looked, and
+    # the apt check's update brought in updates published since.
+    sim.apt_updates = ["new-updates"]
+    check("updates come in with the apt check: started", sim.start(*P26), 0)
+    check("  the y/N screen shows step 1 to do, as the steps will find it",
+          sim.box, [("updates", False), ("to-26.04", False)])
+    sim.boot_until_stopped()
+    check("  the updates, a reboot, then the upgrade and its reboot",
+          (sim.outcomes(), sim.records()[0]["detect_before"], sim.ran()[3:]),
+          ([("updates", "healed"), ("to-26.04", "healed")], 6,
+           ["run:updates", "reboot", "run:resolute", "reboot"]))
+with tempfile.TemporaryDirectory() as td, Sim(td, codename="noble") as sim:
+    sim.check_fails_after_update = True
+    check("a step's check fails after the apt check's update -> 1", sim.start(*P26), 1)
+    check("  not asked, nothing staged, and it names the check",
+          ("confirm" in sim.events, staged(sim),
+           "the check for step updates failed" in sim.output), (False, False, True))
 with tempfile.TemporaryDirectory() as td, Sim(td, codename="mantic") as sim:
     # 23.10 gets no updates any more, so this cannot happen on it. It shows what
     # one step does where updates still come: the full-upgrade puts in a kernel,

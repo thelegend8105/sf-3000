@@ -852,12 +852,13 @@ run. The engine's apt check fetched them. So step 1's check read 6, and step
 1 ran. Its `full-upgrade` met the held lock. By the time step 2 began, the
 second session had let go.
 
-The box that asks for the y is worked out before the apt check
-(`start_procedure`), from apt's lists as they were. So it could not show
-those updates. It counted 1 step and 1 reboot, and 2 of each ran. Nothing
-went wrong because of it: each step runs its own check when its turn comes.
-Only visit 4's step 1 has a check that reads apt's lists, so only visit 4
-can meet this.
+The box that asks for the y was worked out before the apt check
+(`start_procedure` at `5a47978`), from apt's lists as they were. So it could
+not show those updates. It counted 1 step and 1 reboot, and 2 of each ran.
+Nothing went wrong because of it: each step runs its own check when its turn
+comes. Only visit 4's step 1 has a check that reads apt's lists, so only
+visit 4 can meet this. Since then the box is worked out again after the apt
+check (DESIGN.md §16, 2026-10-14).
 
 **What it shows.**
 
