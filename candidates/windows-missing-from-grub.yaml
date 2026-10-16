@@ -49,8 +49,11 @@ expect:
 risk: moderate               # it changes how the start-up menu is built
 requires_privilege: true
 reverse:
-  # The backup is taken fresh by every fix, so the undo puts back exactly what
-  # that fix changed. cp -n would keep an older backup and undo a past fix too.
+  # A backup exists only if this run's fix made one: the fix deletes any older
+  # one first. So the undo puts back exactly what this fix changed, and when
+  # the fix stopped before its backup, the undo does nothing. cp -n, or an old
+  # backup left in place, would put back a file from an earlier run and lose
+  # every change made to it since.
   strategy: command
   command:
     ubuntu: |-
@@ -60,8 +63,12 @@ reverse:
 fix:
   # Ubuntu's own setting, written where Ubuntu documents it. It makes GRUB
   # look for other systems at every rebuild, then rebuilds the menu once now.
+  # Its first step deletes a backup left by an earlier fix. Without that, a
+  # run that stops before its own cp (os-prober missing) would hand the undo
+  # the old backup, and the undo would put back a stale /etc/default/grub.
   ubuntu: |-
     set -e
+    rm -f /etc/default/grub.sf3000.bak
     command -v os-prober >/dev/null || { echo "os-prober is not installed, so GRUB cannot look for Windows" >&2; exit 1; }
     cp -p /etc/default/grub /etc/default/grub.sf3000.bak
     if grep -qE '^[[:space:]]*#?[[:space:]]*GRUB_DISABLE_OS_PROBER=' /etc/default/grub; then
