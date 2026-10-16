@@ -942,3 +942,25 @@ which deletes the clone's run log. Times are IST.
   undo that exits 0 as `rolled_back`, even one with nothing to undo.
 - `-8`, Run 6, `279952d`: Run 2 again. `rolled_back`, verify_after 1, at
   19:46. `/etc/default/grub` and grub.cfg came back byte for byte.
+
+### `ubuntu-22.10-2026-10-16-9.jsonl`
+
+Run 3 of `tests/efi-proof/`: visit 1 on `KineticDesktop` with lab computer
+03's NVIDIA packages, at 03's versions: `nvidia-driver-535` 535.54.03 and
+the prebuilt `linux-modules-nvidia-535-generic-hwe-22.04` 5.19.0-46, no
+dkms. VBox snapshot `efi-nvidia` (`efi-ready` plus those). The clone was
+at `2415fcd`. Copied off at 21:25 IST (`logs/kinetic-desktop-run-3/`). A
+new file, because the VM went back to `efi-ready` first.
+
+- Lines 1 and 2: python3-jsonschema and Timeshift `installed`.
+- Line 3: `to-23.04` `healed`, 2210 to 2304. Snapshot
+  `2026-10-16_20-03-04`, of `22.10 packages:758d752e41e5d906`.
+
+74 minutes from the y to the end: the snapshot 6, then the upgrader's
+download about 21 and its main install pass 34, against 17 in Run 1. The
+difference is the NVIDIA driver. 23.04's last prebuilt module needs driver
+535.154.05, which 23.04 never got, so apt installed `nvidia-dkms-535`
+535.146.02 with a compiler, and dkms built the module for both kernels,
+6.2.0-39 and 5.19.0-46. The driver and the modules matched afterwards.
+GNOME's login screen came up; the VM has no NVIDIA card, so the module
+loading is not shown.

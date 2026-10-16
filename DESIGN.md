@@ -538,8 +538,17 @@ lock in it). The engine restored 22.10 in about a minute and a half and
 the check matched (`rolled_back`). Before and after both runs, nothing of
 Windows' changed: its files, its partitions, its boot entry and the boot
 order (§16). The records are in `evidence/ubuntu-22.10-2026-10-16.jsonl`
-and `-2.jsonl`. Not shown: whether an NVIDIA driver survives the upgrade
-(the VM has none), and whether Windows still starts (stand-ins).
+and `-2.jsonl`. Not shown: whether Windows still starts (stand-ins).
+
+**NVIDIA through visit 1, 2026-10-16** (Run 3 of `tests/efi-proof/`). Lab
+computer 03 runs NVIDIA's driver 535 with a prebuilt module. A desk check of
+old-releases found that 23.04 cannot keep that: its last prebuilt module
+needs driver 535.154.05, which 23.04 never got. 23.10 fits together again.
+Run 3 gave the VM 03's NVIDIA packages at 03's versions and ran visit 1. It
+healed in 74 minutes. apt installed the dkms version of the driver,
+535.146.02, and built its module for both kernels, so driver and modules
+matched. The VM has no NVIDIA card, so the module loading is left for 03.
+The records are in `evidence/ubuntu-22.10-2026-10-16-9.jsonl`.
 
 **A new candidate, `windows-missing-from-grub`, 2026-10-16**
 (`tests/grub-windows-proof/`), on the same VM, with Windows hidden from
@@ -1320,7 +1329,11 @@ fixed before merge (`279952d`, Run 5 of `tests/grub-windows-proof/`).
 
 ---
 
-*Last updated: revision 34 — a new candidate, `windows-missing-from-grub`,
+*Last updated: revision 35 — visit 1 ran on the EFI desktop VM with lab
+computer 03's NVIDIA 535 packages (2026-10-16). 23.04's prebuilt module no
+longer matches its driver, so apt built the driver with dkms for both
+kernels, and visit 1 healed in 74 minutes; §13 updated.
+Revision 34 — a new candidate, `windows-missing-from-grub`,
 puts Windows back in GRUB's start-up menu (2026-10-16). It healed on the EFI
 desktop VM in about 5 s and was undone when it could not work and when it
 stopped early; §12, §13 and §16 updated.

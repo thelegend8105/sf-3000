@@ -161,8 +161,11 @@ partition and a Windows boot entry (`tests/efi-proof/`). It healed in 48
 minutes, and the login screen came up on 23.04. Then, from the same start,
 the disk was filled halfway through the install. The engine restored 22.10
 in about a minute and a half. A check of every Windows part, before and
-after, found nothing changed either time. What a VM cannot show: an NVIDIA
-driver through the upgrade, and Windows itself starting.
+after, found nothing changed either time. A third run gave the VM the lab
+machine's NVIDIA driver packages. 23.04's ready-made NVIDIA module does not
+match its driver, so the upgrade built the driver from source instead, and
+it healed in 74 minutes. What a VM cannot show: the driver loading on a real
+NVIDIA card, and Windows itself starting.
 
 A new candidate, `windows-missing-from-grub`, puts Windows back in GRUB's
 start-up menu on an EFI dual-boot machine. Ubuntu stops looking for Windows

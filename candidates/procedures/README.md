@@ -192,6 +192,13 @@ minutes from the y to the end. Timeshift's install and the first snapshot
 upgrader took 41: about 13 of download, then 26 of install. A lab machine
 has more CPUs, but its root is on a hard disk.
 
+With lab computer 03's NVIDIA 535 packages, visit 1 took 74 minutes on the
+same VM. 23.04's last prebuilt NVIDIA module needs driver 535.154.05, which
+23.04 never got. So apt installs the driver's dkms package, with a compiler,
+and builds the module for each installed kernel during the upgrade. That
+needs the kernel headers (a 22.10 desktop has them). On one CPU the builds
+added about 17 minutes; 03 has 20 threads. 23.10 fits together again.
+
 Visit 2: 20 minutes. Timeshift was already there, and 23.04 had no pending
 updates. The upgrader took 16, of which about 6 were its download.
 

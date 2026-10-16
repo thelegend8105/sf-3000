@@ -3,7 +3,9 @@
 **Both runs passed on 2026-10-16**, at engine commit `2415fcd`. Run 1
 healed in 48 minutes. Run 2 failed on purpose and was restored. Neither
 changed anything of Windows'. The records are in
-`evidence/ubuntu-22.10-2026-10-16.jsonl` and `-2.jsonl`. "What happened",
+`evidence/ubuntu-22.10-2026-10-16.jsonl` and `-2.jsonl`. Run 3, the same
+evening, ran visit 1 with lab computer 03's NVIDIA packages: it healed,
+and apt built the driver with dkms (`-9.jsonl`). "What happened",
 at the end, has the details.
 
 The lab's machines are not like any VM the engine had run on before. Those
@@ -225,8 +227,41 @@ boot entry are unchanged, not that Windows still starts. Both snapshots were
 full copies; 03 has an older Timeshift snapshot, so its first one may link
 to it.
 
+**Run 3: 03's NVIDIA driver through visit 1** (records in
+`evidence/ubuntu-22.10-2026-10-16-9.jsonl`). The worry came from a desk
+check of old-releases' package lists. 03 runs `nvidia-driver-535` 535.54.03
+with a prebuilt module (`linux-modules-nvidia-535-generic-hwe-22.04`, no
+dkms). In 23.04 the two no longer fit together. 23.04's last prebuilt module
+(for kernel 6.2.0-39) needs driver 535.154.05, but 23.04's newest
+`nvidia-driver-535` is 535.146.02, and that driver needs `nvidia-dkms-535`
+at exactly its own version. 23.10 fits together again (535.171.04).
+
+So the VM got 03's NVIDIA packages at 03's versions (VBox snapshot
+`efi-nvidia`, from `efi-ready`), and visit 1 ran again:
+
+```sh
+sudo apt-get install -y nvidia-driver-535=535.54.03-0ubuntu0.22.10.1 linux-modules-nvidia-535-generic-hwe-22.04
+# reboot: GNOME's login screen still comes up; vmwgfx drives the VM's screen
+# then power off, snapshot efi-nvidia, start, and the same --run as Run 1
+```
+
+It healed in 74 minutes. apt took the path that works. It installed
+`nvidia-dkms-535` 535.146.02, with `dkms` and a compiler, and dkms built
+the module for both kernels: `dkms status` says `nvidia/535.146.02,
+6.2.0-39-generic, x86_64: installed`, and the same for 5.19.0-46. The
+driver, the modules and their versions match. The upgrader left the old
+prebuilt 5.19.0-46 module packages installed ("skipping running kernel
+pkg"). The build added about 17 minutes to the install on one CPU; 03 has
+20 threads. `check-windows.sh` showed the same two Ubuntu changes as Run 1
+and nothing else.
+
+What it leaves for 03: the module loading on a real RTX 3060, with Secure
+Boot off as on 03. And the headers: dkms needs the kernel headers, which a
+22.10 desktop installs (`linux-headers-generic-hwe-22.04`). Without them the
+build fails, the upgrade fails, and the engine restores 22.10.
+
 The journal of the boot a restore undoes is rolled back with it: the
 step's own log in `/var/log/sf3000/` is the record of that boot.
 
 The copies, checked with md5: `logs/kinetic-desktop-setup/`,
-`logs/kinetic-desktop-run-1/` and `logs/kinetic-desktop-run-2/`.
+`logs/kinetic-desktop-run-1/`, `-run-2/` and `-run-3/`.
