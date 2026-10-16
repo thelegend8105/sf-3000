@@ -964,3 +964,22 @@ difference is the NVIDIA driver. 23.04's last prebuilt module needs driver
 6.2.0-39 and 5.19.0-46. The driver and the modules matched afterwards.
 GNOME's login screen came up; the VM has no NVIDIA card, so the module
 loading is not shown.
+
+### `ubuntu-22.10-2026-10-16-10.jsonl`
+
+`--cancel` after a real cut-off, on `KineticDesktop` from `efi-nvidia`, at
+`d4a34a0`, with the lab kit's new scripts (`tests/efi-proof/README.md`).
+Copied off at 22:22 IST (`logs/kinetic-desktop-cancel/`).
+
+- Line 1: `engine/install` `installed` (python3-jsonschema, by the kit's
+  `3-sweep.sh`).
+- Line 2: `cut-off-proof/install` `installed` (Timeshift).
+- Line 3: `cut-off-proof/long` `interrupted`, failure `interrupted`,
+  rollback_result "not attempted: cancelled by hand; Timeshift snapshot
+  2026-10-16_22-10-13 kept". The VM was powered off a minute into the step;
+  the boot after held it (`cut_off`); `--cancel` wrote this record. Its
+  timestamp is the step's start. The first `--cancel` after a cut-off on a
+  VM, and the step lab computer 03 takes first on 2026-10-21.
+
+The kit's `7-visit-1.sh`, answered n, logged a `declined` record in the
+clone's own `logs/` (in the copies, `clone-logs-runs.jsonl`).

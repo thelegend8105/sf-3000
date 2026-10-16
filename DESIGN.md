@@ -566,8 +566,10 @@ run with a real Windows, on BIOS, or on another release.
 
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
-procedure branches: `rollback_failed`, `install_failed`, `blocked`, a check
-that fails after its reboot, and `--cancel` after a cut-off. A wait for
+procedure branches: `rollback_failed`, `install_failed`, `blocked`, and a
+check that fails after its reboot. (`--cancel` after a cut-off was seen on
+2026-10-16, on the EFI desktop VM: `interrupted`, the snapshot kept, no
+restore; `tests/efi-proof/`.) A wait for
 dpkg's lock before a restore shows only in visit 4's timing, not in a log.
 Nor has a step waited out a lock that only the upgrader's log names (§16,
 2026-10-14): in Run H the lock met apt-get instead. Nor has a real
@@ -1329,7 +1331,10 @@ fixed before merge (`279952d`, Run 5 of `tests/grub-windows-proof/`).
 
 ---
 
-*Last updated: revision 35 — visit 1 ran on the EFI desktop VM with lab
+*Last updated: revision 36 — `--cancel` after a cut-off ran on a VM for
+the first time (2026-10-16), as lab computer 03 needs before visit 1: it
+recorded `interrupted`, kept the snapshot and restored nothing; §13 updated.
+Revision 35 — visit 1 ran on the EFI desktop VM with lab
 computer 03's NVIDIA 535 packages (2026-10-16). 23.04's prebuilt module no
 longer matches its driver, so apt built the driver with dkms for both
 kernels, and visit 1 healed in 74 minutes; §13 updated.

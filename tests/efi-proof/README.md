@@ -260,6 +260,33 @@ Boot off as on 03. And the headers: dkms needs the kernel headers, which a
 22.10 desktop installs (`linux-headers-generic-hwe-22.04`). Without them the
 build fails, the upgrade fails, and the engine restores 22.10.
 
+**The lab kit, and `--cancel` after a real cut-off** (records in
+`evidence/ubuntu-22.10-2026-10-16-10.jsonl`). Lab computer 03's run of
+2026-10-14 was cut off, so on visit day its first step is `--cancel`. That
+had never run after a real cut-off. The VM went back to `efi-nvidia`, and
+the lab kit's new scripts ran on it in visit day's order (the kit lives in
+the repo's gitignored `logs/lab-kit/`, version `fa071d76`):
+
+- `2-get-engine.sh` pulled the clone to `d4a34a0`.
+- `6-before-visit.sh` said STOP for the missing python3-jsonschema; after
+  `3-sweep.sh` installed it, READY.
+- `7-visit-1.sh`, answered n, reached the box and logged `declined`.
+- With a faked `cut_off` state, 6 said STOP and named `--cancel`, and 7
+  refused before asking anything.
+
+Then a real cut-off, as in Run C of `tests/procedure-proof/`: the
+`cut-off-proof` procedure with `--take-snapshot`, and the VM powered off a
+minute into its 10-minute step. The boot after held it for a person
+(`cut_off`), and 6 said STOP. The README's line, `sudo python3
+engine/runner.py --cancel`, asked nothing, recorded `interrupted` with
+rollback_result "not attempted: cancelled by hand; Timeshift snapshot
+2026-10-16_22-10-13 kept", and restored nothing: the step's marker stayed.
+The snapshot stayed in Timeshift's list. Then 6 said READY.
+
+`8-after-visit.sh` ran on Run 3's result, before this: it listed the
+records and dkms' modules, and compared Windows' parts section by section,
+calling only EFI/ubuntu and GRUB's menu changed, and those Ubuntu's own.
+
 The journal of the boot a restore undoes is rolled back with it: the
 step's own log in `/var/log/sf3000/` is the record of that boot.
 
