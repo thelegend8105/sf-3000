@@ -331,7 +331,9 @@ proactive sweep) live in the MVP.
   22.10 desktop VM built like the lab's machines, with stand-in Windows
   parts on its EFI partition (`tests/efi-proof/`). It healed in 48 minutes.
   Made to fail mid-install, it restored 22.10. Neither changed anything of
-  Windows' (§16). Remaining: visit 1 on a lab machine (computer 03,
+  Windows' (§16). The same day a new candidate, `windows-missing-from-grub`,
+  healed and was undone on that VM; it is the first fix built on a branch of
+  its own and merged once proven. Remaining: visit 1 on a lab machine (computer 03,
   2026-10-21), finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
@@ -538,6 +540,20 @@ Windows' changed: its files, its partitions, its boot entry and the boot
 order (§16). The records are in `evidence/ubuntu-22.10-2026-10-16.jsonl`
 and `-2.jsonl`. Not shown: whether an NVIDIA driver survives the upgrade
 (the VM has none), and whether Windows still starts (stand-ins).
+
+**A new candidate, `windows-missing-from-grub`, 2026-10-16**
+(`tests/grub-windows-proof/`), on the same VM, with Windows hidden from
+GRUB's menu the way it happens. The fix as merged healed in about 5 seconds
+with nothing of Windows' changed. The engine undid it when it could not
+work (Windows' boot file moved away) and when it stopped early, and both
+times `/etc/default/grub` came back byte for byte. An earlier version healed
+twice and was undone once; review found its old-backup flaw (§16). It read
+healthy in the four cases that must not fire: Windows listed, no Windows
+entry, and the search switched off on purpose, in `/etc/default/grub` or in
+a drop-in. When only root can read grub.cfg (as with a GRUB password), a
+user's sweep gives ERROR, not a guess. The records
+are in `evidence/ubuntu-22.10-2026-10-16-3.jsonl` to `-8.jsonl`. Not yet
+run with a real Windows, on BIOS, or on another release.
 
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
@@ -1274,9 +1290,41 @@ mid-install, matched before in every line, `EFI/ubuntu` too.
 parts are stand-ins of random bytes, so a run proves only that they are
 unchanged.
 
+**2026-10-16 — `windows-missing-from-grub` reads the firmware and GRUB's
+menu, never the ESP.** On a dual-boot machine Windows can vanish from GRUB's
+start-up menu while it is still on the disk. Ubuntu leaves
+`GRUB_DISABLE_OS_PROBER` unset, which it reads as "auto": os-prober looks for
+other systems only when grub.cfg does not exist yet, or already lists one
+(`/etc/grub.d/30_os-prober`). So one menu rebuild that misses Windows hides
+it for good. Without another system listed, GRUB hides its menu too, and the
+machine starts Ubuntu with no choice shown.
+
+The detect says PROBLEM when the firmware has a Windows boot entry
+(`efibootmgr -v`) and `/boot/grub/grub.cfg` lists none, unless someone set
+`GRUB_DISABLE_OS_PROBER=true`. The fix deletes any backup an earlier fix
+left, takes a fresh one of `/etc/default/grub`, sets the search on there,
+and runs `update-grub`. The undo puts the backup back and runs `update-grub`.
+
+*Why the firmware and grub.cfg, not the ESP:* a sweep runs without root,
+and Ubuntu mounts the ESP fmask=0077, so a person cannot list it. Both the
+boot entries and grub.cfg can be read without root. *Why never os-prober:*
+it mounts partitions, and a detect must not change the machine. *The price:*
+a stale Windows entry, left after Windows was removed, reads PROBLEM. The
+fix then cannot find Windows, fails its verify and is undone. Safe, but a
+false alarm. *Why `true` reads healthy:* it is a choice, not a fault. *Why
+`/etc/default/grub`, not a drop-in:* it is where Ubuntu documents the
+setting. *Why delete an old backup first:* a fix that stops before its own
+backup (os-prober missing) still gets undone, and the undo would put back
+an old file, losing every change made to it since. Found in review and
+fixed before merge (`279952d`, Run 5 of `tests/grub-windows-proof/`).
+
 ---
 
-*Last updated: revision 33 — visit 1 ran on an EFI 22.10 desktop VM with
+*Last updated: revision 34 — a new candidate, `windows-missing-from-grub`,
+puts Windows back in GRUB's start-up menu (2026-10-16). It healed on the EFI
+desktop VM in about 5 s and was undone when it could not work and when it
+stopped early; §12, §13 and §16 updated.
+Revision 33 — visit 1 ran on an EFI 22.10 desktop VM with
 stand-in Windows parts (2026-10-16, `tests/efi-proof/`). It healed in 48
 minutes. Made to fail mid-install, it restored 22.10. Neither changed
 anything of Windows'. The upgrader ran in desktop mode, and a step printed

@@ -164,6 +164,13 @@ in about a minute and a half. A check of every Windows part, before and
 after, found nothing changed either time. What a VM cannot show: an NVIDIA
 driver through the upgrade, and Windows itself starting.
 
+A new candidate, `windows-missing-from-grub`, puts Windows back in GRUB's
+start-up menu on an EFI dual-boot machine. Ubuntu stops looking for Windows
+after a single menu rebuild that misses it, and the machine then starts
+Ubuntu with no choice shown. On the same VM the fix healed in about 5
+seconds, and the engine undid it when it could not work or stopped early
+(`tests/grub-windows-proof/`).
+
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this
 machine are reported as `SKIPPED` rather than run. `--os` and `--distro`

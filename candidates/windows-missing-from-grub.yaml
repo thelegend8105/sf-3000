@@ -1,0 +1,82 @@
+# CANDIDATE - not yet vetted. A dual-boot machine (EFI) whose start-up menu
+# has lost Windows. Windows itself is still there: the firmware still has its
+# boot entry. Only GRUB's menu stopped listing it. tests/grub-windows-proof/
+# has the VM runs.
+#
+# How it happens. Ubuntu's GRUB leaves GRUB_DISABLE_OS_PROBER unset, which it
+# reads as "auto" (/usr/sbin/grub-mkconfig on 22.10). With "auto",
+# /etc/grub.d/30_os-prober looks for other systems only when grub.cfg does not
+# exist yet, or already lists one it found (LP: #1955109). So one menu rebuild
+# that misses Windows hides it for good: every rebuild after it skips the
+# search. GRUB 2.06 first shipped with the search off, before Ubuntu added
+# "auto", and that one rebuild was enough. Without another system listed,
+# GRUB also hides its menu, so the machine starts Ubuntu with no choice shown.
+#
+# The detect runs without root. /boot/efi is mounted fmask=0077, so a person
+# cannot list the ESP. They can read the firmware's boot entries (efibootmgr)
+# and GRUB's menu (/boot/grub/grub.cfg), and those two answer the question.
+# It never runs os-prober: os-prober mounts partitions, and a detect must not
+# change the machine.
+id: windows-missing-from-grub
+description: Windows is missing from the start-up menu. Its boot entry is still in the firmware, but GRUB has stopped looking for it
+symptoms:
+  - "windows disappeared from the boot menu"
+  - "the computer goes straight into ubuntu"
+  - "no option to start windows any more"
+applies_to:
+  os: linux
+  distros: [ubuntu]
+detect:
+  # 1 = the firmware has a Windows boot entry and GRUB's menu does not list
+  # it. 0 = healthy: GRUB lists it, there is no Windows, the machine starts
+  # without EFI (out of scope), or someone switched the search off on purpose
+  # (GRUB_DISABLE_OS_PROBER=true). An unreadable menu prints nothing, which
+  # the engine reports as ERROR rather than a guess.
+  command: |-
+    [ -d /sys/firmware/efi ] || { echo 0; exit 0; }
+    entries=$(efibootmgr -v) || exit 1
+    printf '%s\n' "$entries" | grep -qi 'bootmgfw\.efi' || { echo 0; exit 0; }
+    [ -r /boot/grub/grub.cfg ] || exit 1
+    grep -qi 'bootmgfw\.efi' /boot/grub/grub.cfg && { echo 0; exit 0; }
+    choice=$(grep -h '^[[:space:]]*GRUB_DISABLE_OS_PROBER=' /etc/default/grub /etc/default/grub.d/*.cfg 2>/dev/null |
+      tail -n 1 | sed -E "s/^[^=]*=//; s/[\"']//g; s/[[:space:]].*//")
+    [ "$choice" = true ] && { echo 0; exit 0; }
+    echo 1
+  produces: integer
+expect:
+  predicate: equals
+  value: 0
+risk: moderate               # it changes how the start-up menu is built
+requires_privilege: true
+reverse:
+  # A backup exists only if this run's fix made one: the fix deletes any older
+  # one first. So the undo puts back exactly what this fix changed, and when
+  # the fix stopped before its backup, the undo does nothing. cp -n, or an old
+  # backup left in place, would put back a file from an earlier run and lose
+  # every change made to it since.
+  strategy: command
+  command:
+    ubuntu: |-
+      [ -e /etc/default/grub.sf3000.bak ] || exit 0
+      mv -f /etc/default/grub.sf3000.bak /etc/default/grub
+      update-grub
+fix:
+  # Ubuntu's own setting, written where Ubuntu documents it. It makes GRUB
+  # look for other systems at every rebuild, then rebuilds the menu once now.
+  # Its first step deletes a backup left by an earlier fix. Without that, a
+  # run that stops before its own cp (os-prober missing) would hand the undo
+  # the old backup, and the undo would put back a stale /etc/default/grub.
+  ubuntu: |-
+    set -e
+    rm -f /etc/default/grub.sf3000.bak
+    command -v os-prober >/dev/null || { echo "os-prober is not installed, so GRUB cannot look for Windows" >&2; exit 1; }
+    cp -p /etc/default/grub /etc/default/grub.sf3000.bak
+    if grep -qE '^[[:space:]]*#?[[:space:]]*GRUB_DISABLE_OS_PROBER=' /etc/default/grub; then
+      sed -i -E 's/^[[:space:]]*#?[[:space:]]*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub
+    else
+      printf '%s\n' '' '# Look for other systems, such as Windows, each time the menu is rebuilt.' 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+    fi
+    update-grub
+verify:
+  rerun: detect
+source: "CANDIDATE - NOT VETTED. Run on the EFI 22.10 desktop VM (stand-in Windows) on 2026-10-16 (tests/grub-windows-proof/): healed in about 5 s with nothing of Windows' changed, and undone with /etc/default/grub back byte for byte (evidence/ubuntu-22.10-2026-10-16-3 to -8). Not yet run with a real Windows, on BIOS, or on another release."

@@ -917,3 +917,28 @@ The restore began at 18:28:07 IST and the machine was back and checked at
 the ESP on the second disk. Every line of `check-windows.sh` matched before,
 EFI/ubuntu included. The step printed the upgrader's log after its failure,
 the first time on a VM; it held no lock message, so the restore was right.
+
+### `ubuntu-22.10-2026-10-16-3.jsonl` to `-8.jsonl`
+
+`tests/grub-windows-proof/`: the candidate `windows-missing-from-grub` on
+`KineticDesktop`, each run from VBox snapshot `grub-trap` (Windows missing
+from GRUB's menu, set the way it happens: one menu rebuild with the search
+off). One record per file, because each run began from a snapshot restore,
+which deletes the clone's run log. Times are IST.
+
+- `-3`, Run 1, commit `aff2c9c`: `healed`, 1 → 0, at 19:29, 5.4 s from the
+  y. `check-windows.sh` after the fix matched the record from before the
+  trap.
+- `-4`, Run 2, `aff2c9c`: Windows' boot file moved off the ESP first, so
+  os-prober could find nothing. `rolled_back`, verify_after 1, rollback_result
+  `ok`, at 19:33. `/etc/default/grub` came back byte for byte.
+- `-5`, Run 3, `aff2c9c`: Run 1 again. `healed`, 1 → 0, at 19:36, 4.9 s.
+- `-6`, Run 4, commit `279952d`, whose fix first deletes any old backup:
+  `healed`, 1 → 0, at 19:42, 5.1 s. Windows' parts unchanged.
+- `-7`, Run 5, `279952d`, the case that commit fixed: an old backup left in
+  place and os-prober moved aside. `fix_exit_code` 1, `rolled_back`,
+  rollback_result `ok`, at 19:44. The undo found no backup and did nothing:
+  `/etc/default/grub` and grub.cfg kept their md5s. The engine records any
+  undo that exits 0 as `rolled_back`, even one with nothing to undo.
+- `-8`, Run 6, `279952d`: Run 2 again. `rolled_back`, verify_after 1, at
+  19:46. `/etc/default/grub` and grub.cfg came back byte for byte.
