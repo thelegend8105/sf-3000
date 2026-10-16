@@ -120,12 +120,22 @@ machine, with the record in `evidence/`.
 - The test machines are VirtualBox VMs on this Windows host
   (`E:\VirtualBox\VBoxManage.exe`). Each has SSH on a localhost port. 2222 is
   26.04. 2223 is KineticServer, installed as 22.10. The upgrade visits move it
-  up a release at a time, so confirm its release before handing over a run.
+  up a release at a time, so confirm its release before a run. 2228 is
+  KineticDesktop, an EFI 22.10 desktop with stand-in Windows parts on its ESP
+  (`tests/efi-proof/README.md`).
   The tracker's "Ubuntu versions" sheet lists them all.
-- **The user runs the VMs.** Do not SSH into one or drive it from a tool call.
-  Hand over exact commands, each with a sentence saying what it does and why,
-  and let the user report back. Read-only VBoxManage queries from the host are
-  fine.
+- **Claude runs the VM tests**, since 2026-10-16 at the user's request. It
+  logs in with the key `~/.ssh/sf3000-vms`, which the user made. On a VM set
+  up for it (KineticDesktop so far), rht has passwordless sudo through
+  `/etc/sudoers.d/sf3000-tests`, so the engine runs with the same
+  `sudo python3 engine/runner.py ...` as on a lab machine. The engine's y/N
+  questions read stdin, so answers can be piped in over ssh. Ask before
+  deleting a VM or a snapshot.
+- **The user runs the lab machines.** Hand over exact commands, each with a
+  sentence saying what it does and why, and let the user report back.
+- A new fix is built on a branch of its own (`fix/<name>`) and merged into
+  master once its VM runs pass. While one piece of work uses a VM, nothing
+  else touches that VM.
 - A VM gets the code by cloning from GitHub, so a change reaches it only once
   pushed. Local `master` has no upstream and the remote branch is `main`:
   `git push origin master:main`. Push only when the user says so.

@@ -184,8 +184,13 @@ to 3:
 Visit 1 on the VM (a server, 1 CPU): 34 minutes from the apt check to the end
 of the upgrader. Timeshift's install took about 2 minutes, and the first
 snapshot 2 minutes. `full-upgrade` installed 22.10's 137 pending updates in
-9 minutes. The upgrader took 19, of which about 5 were its download. A
-desktop has more packages, so expect longer.
+9 minutes. The upgrader took 19, of which about 5 were its download.
+
+Visit 1 on the EFI desktop VM (1 CPU, 2026-10-16; `tests/efi-proof/`): 48
+minutes from the y to the end. Timeshift's install and the first snapshot
+(13 GB, a full copy) took 6. 22.10's updates were already installed. The
+upgrader took 41: about 13 of download, then 26 of install. A lab machine
+has more CPUs, but its root is on a hard disk.
 
 Visit 2: 20 minutes. Timeshift was already there, and 23.04 had no pending
 updates. The upgrader took 16, of which about 6 were its download.

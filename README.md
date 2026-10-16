@@ -138,7 +138,9 @@ Its first step installed the waiting updates and rebooted. At the boot after,
 the automatic updates held dpkg's lock, and the upgrader gave up. It said
 why only in its own log, so the engine took it for a failed upgrade. Each
 upgrade step now shows that log when the upgrader fails, so a held lock makes
-the engine wait instead. That has passed offline, not yet on a VM.
+the engine wait instead. The log was first shown on a VM on 2026-10-16
+(below), after a failure with no lock in it. A lock found that way has passed
+only offline.
 
 The same evening the last upgrade ran again and healed: 24.04 to 26.04 in 24
 minutes. So all four upgrades have now healed on the VM. A lock was held on
@@ -150,7 +152,17 @@ before.
 The screen before the y had said that first step was already done. It was
 worked out before the engine's apt check, which fetched those updates. Now
 the engine works it out again after that check, so the screen shows what
-the steps will find. That has passed offline, not yet on a VM.
+the steps will find. That ran on a VM on 2026-10-16, but there the check
+fetched nothing new, so the screen could not differ.
+
+On 2026-10-16 the first upgrade ran on a second VM built like the lab's
+machines: a 22.10 desktop, EFI, with stand-in Windows files on the EFI
+partition and a Windows boot entry (`tests/efi-proof/`). It healed in 48
+minutes, and the login screen came up on 23.04. Then, from the same start,
+the disk was filled halfway through the install. The engine restored 22.10
+in about a minute and a half. A check of every Windows part, before and
+after, found nothing changed either time. What a VM cannot show: an NVIDIA
+driver through the upgrade, and Windows itself starting.
 
 The engine works out what machine it is on by itself — the OS from the
 platform, the distro from `/etc/os-release`. Playbooks that are not for this

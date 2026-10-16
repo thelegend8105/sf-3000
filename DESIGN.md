@@ -327,8 +327,12 @@ proactive sweep) live in the MVP.
   2026-10-11. On 2026-10-14 the last upgrade ran for real and was restored:
   unattended-upgrades held dpkg's lock, and the upgrader said so only in its
   own log (§16). It ran again that evening (Run H) and healed, so all four
-  upgrades have now healed on that VM. Remaining: the upgrades on an EFI
-  desktop VM, finish proving
+  upgrades have now healed on that VM. On 2026-10-16 visit 1 ran on an EFI
+  22.10 desktop VM built like the lab's machines, with stand-in Windows
+  parts on its EFI partition (`tests/efi-proof/`). It healed in 48 minutes.
+  Made to fail mid-install, it restored 22.10. Neither changed anything of
+  Windows' (§16). Remaining: visit 1 on a lab machine (computer 03,
+  2026-10-21), finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
@@ -517,6 +521,23 @@ minutes, kernel 7.0 and Python 3.14 (`healed`). The box before the y had
 said step 1 was done: it was worked out before the apt check, from apt's
 lists as they were. Since then it is worked out again after that check
 (§16). The records are in `evidence/ubuntu-22.10-2026-10-14-2.jsonl`.
+
+**Visit 1 on an EFI desktop, 2026-10-16** (`tests/efi-proof/`). A new VM,
+`KineticDesktop`: a 22.10 desktop, EFI with Secure Boot off, `/` on a SATA
+disk, and the EFI partition on a second (NVMe) disk with stand-in Windows
+parts beside Ubuntu's, as on lab computer 03. The engine installed
+python3-jsonschema after a y, the first time on a VM, since the server VMs
+ship it. Run 1: visit 1 healed in 48 minutes (snapshot 5, download 13,
+install 26), and GNOME's login screen came up on 23.04. The upgrader ran in
+desktop mode, whatever the step's `--mode=server` said. Run 2, from the
+same starting point, filled the disk a minute into the install. dpkg
+failed, the upgrader exited 1, and the step printed the upgrader's log (no
+lock in it). The engine restored 22.10 in about a minute and a half and
+the check matched (`rolled_back`). Before and after both runs, nothing of
+Windows' changed: its files, its partitions, its boot entry and the boot
+order (§16). The records are in `evidence/ubuntu-22.10-2026-10-16.jsonl`
+and `-2.jsonl`. Not shown: whether an NVIDIA driver survives the upgrade
+(the VM has none), and whether Windows still starts (stand-ins).
 
 **Not yet seen on a real machine:** an undo stopped by a package-manager lock
 (`rollback_result: blocked (retryable)`). It passes offline. Nor have these
@@ -1185,7 +1206,11 @@ Run H of `tests/procedure-proof/`, a lock held on purpose met step 1's
 since the updates were installed by hand made step 1 run. The engine waited
 twice, then the step healed, and the upgrader ran at its first attempt and
 healed too. So the changed command ran on the VM, but the part that prints
-the log, which runs only when the upgrader fails, did not.
+the log, which runs only when the upgrader fails, did not. *It ran on
+2026-10-16,* in Run 2 of `tests/efi-proof/`: the disk was filled
+mid-install, the upgrader failed, and the step printed its log. That log
+held no lock message, so the engine restored, as it should. A lock that
+only the upgrader's log names is still unseen on a VM.
 
 **2026-10-14 — The box before the y is worked out again after the apt
 check.** In Run H on the VM, the box said visit 4's step 1 was done, and
@@ -1213,14 +1238,52 @@ check fail after the update: the run stops with exit 1, before the y. And
 each refusal before the apt check is now checked to leave apt's lists alone.
 Passing on Python 3.12 and 3.10. Three deliberate breaks were each caught:
 the old order, a second answer whose refusal is dropped, and the apt check
-moved before the first answer. Not yet run on a VM.
+moved before the first answer. *On a VM on 2026-10-16* (Runs 1 and 2 of
+`tests/efi-proof/`), the new order ran, but the apt check fetched nothing
+new for 22.10, so the case it fixes did not come up.
+
+**2026-10-16 — What "Windows is not touched" means, and how a run checks
+it.** The lab's machines dual-boot. Their EFI partition (ESP) is on the
+Windows disk, and holds both systems' boot files. The rule is that Windows
+must not be touched. A run checks it by reading, before and after,
+everything on the disk that holds `/boot/efi`: its partition table, the raw
+bytes of every other partition, every file on the ESP, and the firmware's
+boot entries and their order. `tests/efi-proof/check-windows.sh` prints
+them, and a diff compares the two.
+
+Three things there are Ubuntu's, and may change: `EFI/ubuntu` (shim and
+GRUB), GRUB's menu (which must still list Windows), and `EFI/BOOT` when it
+holds Ubuntu's shim. Everything else must match, the boot order included.
+
+*Why EFI/BOOT can be Ubuntu's:* it is the firmware's fallback, and whoever
+installs last may own it. On the VM, Ubuntu's installer put shim there, and
+22.10's shim update rewrote it. Counted as Windows', it would flag every
+Ubuntu shim update. Shim puts `fbx64.efi` beside its copy, and Windows'
+copy comes without one, so that file decides which it is. 03's `EFI/Boot`
+is 1.9 MB, the size of shim's three files. *Why the boot order must not
+change, not merely Windows' entry:* the person picks Windows from it, and
+it is the firmware's, not Ubuntu's.
+
+*Why leaving `/boot/efi` out of the snapshot is enough:* the restore then
+leaves the ESP alone, and Timeshift's GRUB reinstall writes only Ubuntu's
+files. Seen on the VM on 2026-10-16: visit 1 changed only
+`EFI/ubuntu/grubx64.efi` and GRUB's menu, and its restore, made to happen
+mid-install, matched before in every line, `EFI/ubuntu` too.
+
+*What it cannot show on a VM:* that Windows still starts. The VM's Windows
+parts are stand-ins of random bytes, so a run proves only that they are
+unchanged.
 
 ---
 
-*Last updated: revision 32 — the box before the y is worked out again after
+*Last updated: revision 33 — visit 1 ran on an EFI 22.10 desktop VM with
+stand-in Windows parts (2026-10-16, `tests/efi-proof/`). It healed in 48
+minutes. Made to fail mid-install, it restored 22.10. Neither changed
+anything of Windows'. The upgrader ran in desktop mode, and a step printed
+the upgrader's log on a VM for the first time; §12, §13 and §16 updated.
+Revision 32 — the box before the y is worked out again after
 the apt check, so it shows what the steps will find (2026-10-14, from Run
-H). Built and passing offline on Python 3.12 and 3.10, not yet run on a VM;
-§13 and §16 updated.
+H). Built and passing offline on Python 3.12 and 3.10; §13 and §16 updated.
 Revision 31 — Run H (2026-10-14): visit 4 healed on the VM at
 its second try, 24.04 to 26.04, so all four upgrades have healed there. The
 lock held on purpose met step 1's apt-get, not the upgrader: a step's wait

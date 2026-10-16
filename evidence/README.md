@@ -875,3 +875,45 @@ check (DESIGN.md §16, 2026-10-14).
   on a failure was skipped. That part has passed only offline (DESIGN.md
   §16, 2026-10-14).
 - A second incremental snapshot: 64 s, linked to visit 4's.
+
+### `ubuntu-22.10-2026-10-16.jsonl`
+
+Run 1 of `tests/efi-proof/`: visit 1 on `KineticDesktop`, an EFI 22.10
+desktop VM (SSH 2228) with stand-in Windows parts on its ESP, from its
+`efi-ready` snapshot. The clone was at `2415fcd`. Copied off at 18:02 IST,
+with the upgrader's logs (`logs/kinetic-desktop-run-1/`). A new VM, so a
+new file: its lines do not continue KineticServer's.
+
+- Line 1: `engine/install` `installed`: python3-jsonschema, which the
+  desktop lacks, installed after a y. The first such record from a VM.
+- Line 2: `release-upgrade-to-23.04/install` `installed`: Timeshift.
+- Line 3: `to-23.04` `healed`, 2210 to 2304. Snapshot `2026-10-16_17-11-46`.
+
+A pass before it answered n at the box, so the clone's own `logs/` has a
+`declined` record too (in the copies, `clone-logs-runs.jsonl`).
+
+48 minutes from the y to the end: Timeshift and the snapshot 6, the
+upgrader's download 13, its install 26, the reboot and check 1. The
+upgrader ran in desktop mode whatever the step's `--mode=server` said. Only
+`EFI/ubuntu/grubx64.efi` and GRUB's menu changed on the ESP's side; every
+stand-in Windows part kept its hash. Details in `tests/efi-proof/README.md`.
+
+### `ubuntu-22.10-2026-10-16-2.jsonl`
+
+Run 2 of `tests/efi-proof/`: visit 1 again on `KineticDesktop`, back at
+`efi-ready`, with `fill-disk.py mid-install to-23.04` filling the disk a
+minute into the install. The clone was at `2415fcd`. Copied off at 19:15
+IST (`logs/kinetic-desktop-run-2/`). It does not continue the -16 file:
+restoring `efi-ready` took the VM back to before Run 1.
+
+- Lines 1 and 2: the same two `installed` records as Run 1.
+- Line 3: `to-23.04` `rolled_back`, `failure: fix_failed`, exit 1,
+  rollback_result `ok: back to 22.10 packages:af890f897a40621d`, the
+  fingerprint taken before the snapshot. `leftovers_stopped` is null: there
+  were none.
+
+The restore began at 18:28:07 IST and the machine was back and checked at
+18:29:43. It crossed from a half-upgraded 23.04 back to 22.10 on EFI, with
+the ESP on the second disk. Every line of `check-windows.sh` matched before,
+EFI/ubuntu included. The step printed the upgrader's log after its failure,
+the first time on a VM; it held no lock message, so the restore was right.
