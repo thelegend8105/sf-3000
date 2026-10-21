@@ -167,6 +167,13 @@ match its driver, so the upgrade built the driver from source instead, and
 it healed in 74 minutes. What a VM cannot show: the driver loading on a real
 NVIDIA card, and Windows itself starting.
 
+On 2026-10-21 the first upgrade ran on a real lab machine, MITB-IT-406-03,
+and healed: 22.10 to 23.04 in about 70 minutes. Its NVIDIA driver was built
+during the upgrade and works on the real card. A check of every Windows
+part, before and after, found only Ubuntu's own changes. The desktop came
+up. Earlier, a run started by accident on 2026-10-14 had been cut off.
+`--cancel` closed it and kept its snapshot, as it did on the VM.
+
 A new candidate, `windows-missing-from-grub`, puts Windows back in GRUB's
 start-up menu on an EFI dual-boot machine. Ubuntu stops looking for Windows
 after a single menu rebuild that misses it, and the machine then starts

@@ -333,8 +333,10 @@ proactive sweep) live in the MVP.
   Made to fail mid-install, it restored 22.10. Neither changed anything of
   Windows' (§16). The same day a new candidate, `windows-missing-from-grub`,
   healed and was undone on that VM; it is the first fix built on a branch of
-  its own and merged once proven. Remaining: visit 1 on a lab machine (computer 03,
-  2026-10-21), finish proving
+  its own and merged once proven. On 2026-10-21 visit 1 healed on lab
+  computer MITB-IT-406-03, the first upgrade on a lab machine: 22.10 to
+  23.04 in about 70 minutes, NVIDIA's driver working after it, and nothing
+  of Windows' changed. Remaining: finish proving
   `eos-release-dead-repos` (24.10 must heal; 20.04 and 25.04 must stay
   healthy), and grow the library of Ubuntu playbooks from problems we've
   really solved. The test releases are in `docs/sf3000-tracker.xlsx`.
@@ -550,6 +552,20 @@ healed in 74 minutes. apt installed the dkms version of the driver,
 matched. The VM has no NVIDIA card, so the module loading is left for 03.
 The records are in `evidence/ubuntu-22.10-2026-10-16-9.jsonl`.
 
+**Visit 1 on a lab machine, 2026-10-21.** Lab computer MITB-IT-406-03: an
+HP Z1 G9, EFI, Windows on its NVMe disk, Ubuntu on a hard disk, and an RTX
+3060 with NVIDIA 535. A `--run` started by accident on 2026-10-14 had been
+cut off during 22.10's updates. `--cancel` recorded it as `interrupted` and
+kept its snapshot, the first `--cancel` on a lab machine. Then the lab kit's
+checks said READY, and visit 1 healed: 22.10 to 23.04, about 70 minutes
+from the y until the machine was back up. The snapshot took 51 seconds,
+since only what had changed since the 10-14 snapshot was copied; that first
+one, a full copy, took 22 minutes. apt built the NVIDIA driver with dkms for
+both kernels, as on the VM, and the module was loaded on the real card
+afterwards. The kit's Windows check found only Ubuntu's own changes, the
+same two as on the VM. The desktop came up. The records are in
+`evidence/lab-MITB-IT-406-03-ubuntu-22.10-2026-10-21.jsonl`.
+
 **A new candidate, `windows-missing-from-grub`, 2026-10-16**
 (`tests/grub-windows-proof/`), on the same VM, with Windows hidden from
 GRUB's menu the way it happens. The fix as merged healed in about 5 seconds
@@ -569,7 +585,8 @@ run with a real Windows, on BIOS, or on another release.
 procedure branches: `rollback_failed`, `install_failed`, `blocked`, and a
 check that fails after its reboot. (`--cancel` after a cut-off was seen on
 2026-10-16, on the EFI desktop VM: `interrupted`, the snapshot kept, no
-restore; `tests/efi-proof/`.) A wait for
+restore; `tests/efi-proof/`. It ran on lab computer MITB-IT-406-03 on
+2026-10-21 too.) A wait for
 dpkg's lock before a restore shows only in visit 4's timing, not in a log.
 Nor has a step waited out a lock that only the upgrader's log names (§16,
 2026-10-14): in Run H the lock met apt-get instead. Nor has a real
@@ -1331,7 +1348,11 @@ fixed before merge (`279952d`, Run 5 of `tests/grub-windows-proof/`).
 
 ---
 
-*Last updated: revision 36 — `--cancel` after a cut-off ran on a VM for
+*Last updated: revision 37 — visit 1 healed on lab computer MITB-IT-406-03
+(2026-10-21), the first upgrade on a lab machine: about 70 minutes, the
+NVIDIA driver built with dkms and loaded on the real card, nothing of
+Windows' changed; §12 and §13 updated.
+Revision 36 — `--cancel` after a cut-off ran on a VM for
 the first time (2026-10-16), as lab computer 03 needs before visit 1: it
 recorded `interrupted`, kept the snapshot and restored nothing; §13 updated.
 Revision 35 — visit 1 ran on the EFI desktop VM with lab

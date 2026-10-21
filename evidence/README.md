@@ -10,6 +10,10 @@ the only lasting record of what the engine actually did on a machine.
 - Copy the file as it is. Never edit a record, even to fix a typo.
 - One file per copy, named `<distro>-<release>-<date of the last run>.jsonl`.
   If that name is taken, add `-2`, `-3` and so on.
+- A copy from a lab machine starts with `lab-` and the machine's full name,
+  as `lab-MITB-IT-406-03-ubuntu-22.10-2026-10-21.jsonl`. The release is the
+  one the machine had before its first run. So a lab record can never be
+  mistaken for a VM's.
 - The tracker's Run log sheet points at these files, one row per record.
 
 Copy it off the VM like this (on Windows, from the repo):
@@ -983,3 +987,49 @@ Copied off at 22:22 IST (`logs/kinetic-desktop-cancel/`).
 
 The kit's `7-visit-1.sh`, answered n, logged a `declined` record in the
 clone's own `logs/` (in the copies, `clone-logs-runs.jsonl`).
+
+### `lab-MITB-IT-406-03-ubuntu-22.10-2026-10-14.jsonl`
+
+Lab computer MITB-IT-406-03 (an HP Z1 G9: EFI, Windows on its NVMe disk,
+Ubuntu on a hard disk, RTX 3060 with NVIDIA 535). The clone's own run log,
+`~/sf-3000/logs/runs.jsonl`, saved by the lab kit's `5-save.sh` on
+2026-10-21 (`logs/lab-2026-10-21/03-5c60ba31b8c6/10-save/clone-logs/`).
+
+- Line 1: `release-upgrade-to-23.04` `declined`, at 15:45 IST on 2026-10-14.
+  The restore offered after that day's cut-off, answered n.
+
+03's clock runs 5 h 28 min fast, so its records are 5 h 28 min ahead of
+the real time. The times here are corrected; the records are not.
+
+### `lab-MITB-IT-406-03-ubuntu-22.10-2026-10-21.jsonl`
+
+The same machine's `/var/log/sf3000/runs.jsonl`, saved by `5-save.sh` after
+visit 1 (`logs/lab-2026-10-21/03-5c60ba31b8c6/10-save/var-log-sf3000/`).
+Times are corrected for the clock, as above.
+
+- Line 1: `engine/install` `installed` (python3-jsonschema), 14:07 IST on
+  2026-10-14, engine `01df9d9`. A `--run` started by accident, before the
+  kit's runs that day.
+- Line 2: `release-upgrade-to-23.04/install` `installed` (Timeshift), 14:10.
+  Its snapshot, `2026-10-14_19-40-01`, a full copy, took 22 minutes.
+- Line 3: `to-23.04` `interrupted`, rollback_result "not attempted:
+  cancelled by hand; Timeshift snapshot 2026-10-14_19-40-01 kept". The step
+  started at 14:34 IST, and the machine went down during 22.10's
+  `full-upgrade`, before the upgrader started. `--cancel` wrote this record
+  on 2026-10-21, before visit 1. Its timestamp is the step's start. The
+  first `--cancel` on a lab machine.
+- Line 4: `to-23.04` `healed`, 2210 to 2304, at `d4a34a0`. The y was at
+  13:50 IST on 2026-10-21; the step started at 13:52. Snapshot
+  `2026-10-21_19-19-58`, 51 seconds, because only what had changed since
+  the 10-14 snapshot was copied. The first upgrade on a lab machine.
+
+About 70 minutes from the y until the machine was back up on 23.04. 22.10's
+updates had been installed on 10-14, so step 1's `full-upgrade` had only 2
+packages to do. The upgrader downloaded everything itself: the 10-14 run
+stopped before it started. apt installed `nvidia-dkms-535` 535.146.02 and
+built the module for 6.2.0-39 and 5.19.0-46, as Run 3 on the VM did. After
+the reboot the module was loaded on the RTX 3060 and `nvidia-smi` worked.
+The kit's Windows check (`07-windows-before.txt`, `09-windows-after.txt`)
+found only Ubuntu's own changes: `EFI/ubuntu/grubx64.efi` and two memory
+test entries in GRUB's menu. Windows is still in the menu. The desktop came
+up and the person logged in.
