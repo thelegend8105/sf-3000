@@ -315,36 +315,62 @@ def run_command(cmd: str, timeout: int):
         return None, "", f"timed out after {timeout}s"
 
 
-def ask_yes(question: str) -> bool:
-    """One y/N question. Anything but y, including no terminal to ask on, is no."""
+def ask(question: str) -> str:
+    """One question, answered in lower case. No terminal to ask on is ""."""
     try:
-        return input(question).strip().lower() == "y"
+        return input(question).strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
-        return False
+        return ""
+
+
+def ask_yes(question: str) -> bool:
+    """One y/N question. Anything but y, including no terminal to ask on, is no."""
+    return ask(question) == "y"
 
 
 def confirm(pb: dict, fix_cmd: str, snapshot: bool) -> bool:
     strategy = pb["reverse"]["strategy"]
+    # A reviewed summary stands in for the command (DESIGN.md section 16). A
+    # dozen lines of shell push risk and undo out of sight, and say little to
+    # most people. The command stays one key away, and always goes to the log.
+    summary = pb.get("summary")
+    # Wrapped, not printed raw: a long provenance line runs to a dozen terminal
+    # rows and pushes command/risk/undo — the things actually being authorised —
+    # up out of sight above the prompt.
+    source = textwrap.fill(pb.get("source", "unrecorded"), width=64,
+                           initial_indent="  source    : ",
+                           subsequent_indent="              ")
     print()
     print("=" * 64)
     print(f"  {pb['id']}")
-    print(f"  {pb['description']}")
+    print(textwrap.fill(pb["description"], width=64,
+                        initial_indent="  ", subsequent_indent="  "))
     print("-" * 64)
-    print(f"  command   : {fix_cmd}")
+    if summary:
+        print(textwrap.fill(summary, width=64,
+                            initial_indent="  fix       : ",
+                            subsequent_indent="              "))
+    else:
+        print(f"  command   : {fix_cmd}")
     print(f"  risk      : {pb['risk']}")
     print(f"  undo      : {strategy}")
     if strategy == "none":
         print("              (no undo — if this fails you fix it by hand)")
     print(f"  snapshot  : {'yes' if snapshot else 'no'}")
-    # Wrapped, not printed raw: a long provenance line runs to a dozen terminal
-    # rows and pushes command/risk/undo — the things actually being authorised —
-    # up out of sight above the prompt.
-    print(textwrap.fill(pb.get("source", "unrecorded"), width=64,
-                        initial_indent="  source    : ",
-                        subsequent_indent="              "))
+    if summary:
+        print("  details   : press v for the command and where it was tested")
+    else:
+        print(source)
     print("=" * 64)
-    return ask_yes("Run this fix? [y/N] ")
+    if not summary:
+        return ask_yes("Run this fix? [y/N] ")
+    while True:
+        answer = ask("Run this fix? [y/N/v] ")
+        if answer != "v":
+            return answer == "y"
+        print(textwrap.indent(fix_cmd, "  | "))
+        print(source)
 
 
 def rollback(pb: dict, distro: str, record: dict):
@@ -476,7 +502,10 @@ def fix_one(pb: dict, distro: str, log_path: Path, host_os: str) -> int:
         return 0
     record["confirmed"] = True
 
-    print(f"\n  {MARK['arrow']} running: {fix_cmd}")
+    if "summary" in pb:
+        print(f"\n  {MARK['arrow']} running the fix (its command goes to the log)")
+    else:
+        print(f"\n  {MARK['arrow']} running: {fix_cmd}")
     code, out, err = run_command(fix_cmd, FIX_TIMEOUT)
     record["fix_command"] = fix_cmd
     record["fix_exit_code"] = code
@@ -2159,7 +2188,13 @@ def main():
             print(f"            {MARK['arrow']} risk={pb['risk']} "
                   f"undo={pb['reverse']['strategy']} "
                   f"privilege={pb['requires_privilege']}")
-            print(f"            {MARK['arrow']} DRY-RUN fix ({args.distro}): {fix}")
+            if "summary" in pb:
+                print(f"            {MARK['arrow']} DRY-RUN fix ({args.distro}): "
+                      f"{pb['summary']}")
+                print(f"            {MARK['arrow']} --fix {pb['id']} shows the "
+                      "command before it asks")
+            else:
+                print(f"            {MARK['arrow']} DRY-RUN fix ({args.distro}): {fix}")
     print("-" * 60)
     summary = f"{problems} problem(s) found."
     if skipped:

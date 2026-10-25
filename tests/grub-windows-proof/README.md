@@ -312,14 +312,16 @@ Run log sheet, three rows:
 
 **For the demo (2026-11-03)**
 
-- Start from VBox snapshot `grub-trap`, then copy the current playbook in.
+- Start from VBox snapshot `grub-trap`, then bring the clone up to date
+  (`git pull`). The snapshot holds the older aff2c9c playbook and an engine
+  without `summary`.
 - Use a warm reboot (`sudo reboot`) to show the menu. A cold start right
   after a snapshot restore skipped GRUB's 10 s menu on this host, even with
   Windows listed.
-- The confirm box for this entry is long. Run 4 printed 35 lines from its
-  first `====` to the y/N question: 12 for the fix command, 16 for the
-  wrapped `source:` text. The shorter `source:` line on this branch brings it
-  to 27 lines (measured offline with the engine's own `confirm`). The fix
-  command alone still takes 12.
+- The confirm box was long. Run 4 printed 35 lines from its first `====` to
+  the y/N question: 12 for the fix command, 16 for the wrapped `source:`
+  text. Since 2026-10-25 the playbook has a `summary`, and the box is 14
+  lines: the summary, risk, undo and snapshot. `v` shows the command and
+  the source (measured offline with the engine's own `confirm`).
 - The fix's `update-grub` output is captured, not shown. The proof on screen
   is the sweep after it (HEALTHY) and the reboot's menu.
