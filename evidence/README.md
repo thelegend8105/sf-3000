@@ -966,6 +966,18 @@ Console output, screenshots and the Windows checks are in
   only change from the trap state was GRUB's menu, which listed Windows
   again.
 
+### `ubuntu-22.10-2026-10-25-2.jsonl`
+
+A timed rehearsal of the live demo, on `KineticDesktop` from VBox snapshot
+`demo-start` (`grub-trap` with the clone at `c4d67cc`). Scripted over SSH,
+answers piped in. The clone's `logs/runs.jsonl`, copied off at 15:29 IST,
+md5 checked. Its own file, because `demo-start` began with no run log.
+
+- Line 1, 15:24 IST: `windows-missing-from-grub` `healed`, 1 → 0. 14 s from
+  the start of `--fix` to its outcome, the y answered at once.
+  `check-windows.sh` after a reboot matched the record from before the
+  trap. Timeline and screenshots in `logs/demo-rehearsal-1/` (not in git).
+
 ### `ubuntu-22.10-2026-10-16-9.jsonl`
 
 Run 3 of `tests/efi-proof/`: visit 1 on `KineticDesktop` with lab computer

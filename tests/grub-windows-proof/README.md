@@ -61,9 +61,10 @@ sudo update-grub                     # still "will not be executed": the trap ho
 | snapshot | state |
 |----------|-------|
 | `grub-base` | `efi-ready`, plus python3-jsonschema (installed by the engine after a y) and the playbook copied into `~/sf-3000/candidates/`. GRUB lists Windows. Healthy. |
-| `grub-trap` | `grub-base` with the trap set. The entry reads PROBLEM 1. `~/grub-windows-before.txt` is `check-windows.sh` before the trap. The demo's starting point. |
+| `grub-trap` | `grub-base` with the trap set. The entry reads PROBLEM 1. `~/grub-windows-before.txt` is `check-windows.sh` before the trap. |
+| `demo-start` | `grub-trap` with the clone pulled to `c4d67cc` (2026-10-25), the hand-copied playbook moved to `~/`. Reads PROBLEM 1. The demo's starting point. |
 
-Both snapshots hold the playbook from `aff2c9c`. Copy the current file into
+`grub-base` and `grub-trap` hold the playbook from `aff2c9c`. Copy the current file into
 `~/sf-3000/candidates/` after each restore (`scp -P 2228`), and check its md5.
 
 ## Steps
@@ -186,6 +187,8 @@ Evidence: `evidence/ubuntu-22.10-2026-10-25.jsonl`.
   altogether. On 2026-10-16 the full 10 s showed. This is the host's virtual
   clock, as with the cold start below. grub.cfg was right: it lists Windows
   and ends with `timeout_style=menu`.
+  Measured later the same day at about 10 frames a second, the menu was
+  up for only about 0.6 s ("For the demo", below).
 
 **The engine's word for "nothing to undo".** In Run 5 the fix failed, and
 the record says `rolled_back`, not `fix_failed`. `fix_one` passes every failed
@@ -339,19 +342,41 @@ Run log sheet, three rows:
 
 **For the demo (2026-11-03)**
 
-- Start from VBox snapshot `grub-trap`, then bring the clone up to date
-  (`git pull`). The snapshot holds the older aff2c9c playbook and an engine
-  without `summary`.
-- Use a warm reboot (`sudo reboot`) to show the menu. A cold start right
-  after a snapshot restore skipped GRUB's 10 s menu on this host, even with
-  Windows listed.
-- Even after a warm reboot, the menu may be on screen for only about 3 s
-  (2026-10-25). Watch the VM window and press an arrow key as soon as the
-  menu appears: that stops the countdown, and the menu stays until Enter.
-- The confirm box was long. Run 4 printed 35 lines from its first `====` to
-  the y/N question: 12 for the fix command, 16 for the wrapped `source:`
-  text. Since 2026-10-25 the playbook has a `summary`, and the box is 14
-  lines: the summary, risk, undo and snapshot. `v` shows the command and
-  the source (measured offline with the engine's own `confirm`).
+Everything is live. Nothing is pre-recorded, except a full rehearsal kept
+as a fallback in case the live run breaks.
+
+- Start from VBox snapshot `demo-start` (2026-10-25): `grub-trap` with the
+  clone pulled to `c4d67cc`, so the engine and the playbook have the
+  `summary`. Boot it before the talk: a cold boot reached the login screen
+  in 43 s. Restoring it deletes the clone's run log: copy that off first.
+- The first reboot shows the problem. Do not touch the keyboard during it:
+  a key in GRUB's hidden wait could bring up the menu.
+- The second reboot shows the menu. GRUB's 10 s countdown passes in about
+  0.6 s on this host, too fast for anyone to react to. So click into the VM
+  window and **tap the Up arrow over and over from the VirtualBox logo
+  on**. Tested 2026-10-25: the menu came up with its countdown already
+  stopped and stayed until Enter. Tapping before the menu does no harm.
+- A cold start right after a snapshot restore skipped the menu altogether.
+  The reboots in the demo are warm (`sudo reboot`), which is fine.
+- The box is 14 lines: the summary, risk, undo and snapshot. `v` shows the
+  command and the source.
 - The fix's `update-grub` output is captured, not shown. The proof on screen
-  is the sweep after it (HEALTHY) and the reboot's menu.
+  is the sweep after it (HEALTHY), the reboot's menu, and `check-windows`.
+
+**A timed rehearsal (2026-10-25).** Scripted over SSH from `demo-start`,
+with no talking, so these are the machine's times only:
+
+| step | time |
+|------|------|
+| reboot with the fault, to the login screen (no menu: logo, about 6 s black, Ubuntu) | 50 s |
+| sweep (PROBLEM) | 3 s |
+| `--fix`, y answered at once, to `healed` | 14 s |
+| sweep (HEALTHY) | 1 s |
+| reboot after the fix, to the login screen (menu held with Up, then Enter) | 44 s, plus the hold |
+| `check-windows.sh` and its diff (no difference) | 47 s |
+
+About 2 min 40 s of machine time. `check-windows.sh` is the longest wait
+after the reboots. It can run straight after the fix, before the second
+reboot, so that the menu with Windows is the last thing shown. The record
+is `evidence/ubuntu-22.10-2026-10-25-2.jsonl`. The timeline, the scripts and
+every screenshot are in `logs/demo-rehearsal-1/` (not in git).
