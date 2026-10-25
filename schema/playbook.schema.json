@@ -100,6 +100,11 @@
       "minProperties": 1,
       "additionalProperties": { "type": "string" }
     },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the fix changes, in plain words for someone who does not read shell. Reviewed with the fix, like the command it stands for. When present, the confirm box shows it in place of the command, and v shows the command."
+    },
     "verify": {
       "type": "object",
       "additionalProperties": false,
@@ -123,6 +128,10 @@
     {
       "if": { "required": ["fix"] },
       "then": { "required": ["verify"] }
+    },
+    {
+      "if": { "required": ["summary"] },
+      "then": { "required": ["fix"] }
     }
   ]
 }

@@ -160,6 +160,33 @@ Evidence names are `evidence/ubuntu-22.10-2026-10-16<suffix>.jsonl`.
   went back with its sha256 unchanged (`ce25fc3e...`).
 - The healthy cases A to D read as listed in Steps.
 
+## The box with a summary (2026-10-25, UTC)
+
+Commit `a298fc9`, branch `confirm-summary`, from `grub-trap`. The clone was
+checked out at the branch, and the hand-copied playbook moved aside first.
+
+| run | time | answers | record | before → after | wall time | evidence |
+|-----|------|---------|--------|----------------|-----------|----------|
+| 7 | 09:29:25 | v, then n | `declined` | 1 | | line 1 |
+| 8 | 09:29:33 | y | `healed` | 1 → 0 | 4.9 s | line 2 |
+
+Evidence: `evidence/ubuntu-22.10-2026-10-25.jsonl`.
+
+- The sweep showed the summary on the `DRY-RUN fix` line and no command.
+- The box was 14 lines: id, description, the summary as `fix`, risk, undo,
+  snapshot, and the line about v. v printed all 10 lines of the command and
+  the source, then asked again.
+- Run 8 printed "running the fix", not the command. Both records hold the
+  full command in `fix_command`. `check-windows.sh` after Run 8 matched the
+  record from before the trap.
+- **GRUB's countdown ran about 3 times too fast.** In a warm reboot after
+  Run 8, three screenshots taken back to back (about a second apart) read
+  8 s, 4 s and 1 s. The menu was on screen for about 3 seconds. In the
+  reboot before it, at one screenshot every 2 seconds or so, it was missed
+  altogether. On 2026-10-16 the full 10 s showed. This is the host's virtual
+  clock, as with the cold start below. grub.cfg was right: it lists Windows
+  and ends with `timeout_style=menu`.
+
 **The engine's word for "nothing to undo".** In Run 5 the fix failed, and
 the record says `rolled_back`, not `fix_failed`. `fix_one` passes every failed
 fix to `rollback()`, which returns `rolled_back` whenever the undo exits 0. Here
@@ -312,14 +339,19 @@ Run log sheet, three rows:
 
 **For the demo (2026-11-03)**
 
-- Start from VBox snapshot `grub-trap`, then copy the current playbook in.
+- Start from VBox snapshot `grub-trap`, then bring the clone up to date
+  (`git pull`). The snapshot holds the older aff2c9c playbook and an engine
+  without `summary`.
 - Use a warm reboot (`sudo reboot`) to show the menu. A cold start right
   after a snapshot restore skipped GRUB's 10 s menu on this host, even with
   Windows listed.
-- The confirm box for this entry is long. Run 4 printed 35 lines from its
-  first `====` to the y/N question: 12 for the fix command, 16 for the
-  wrapped `source:` text. The shorter `source:` line on this branch brings it
-  to 27 lines (measured offline with the engine's own `confirm`). The fix
-  command alone still takes 12.
+- Even after a warm reboot, the menu may be on screen for only about 3 s
+  (2026-10-25). Watch the VM window and press an arrow key as soon as the
+  menu appears: that stops the countdown, and the menu stays until Enter.
+- The confirm box was long. Run 4 printed 35 lines from its first `====` to
+  the y/N question: 12 for the fix command, 16 for the wrapped `source:`
+  text. Since 2026-10-25 the playbook has a `summary`, and the box is 14
+  lines: the summary, risk, undo and snapshot. `v` shows the command and
+  the source (measured offline with the engine's own `confirm`).
 - The fix's `update-grub` output is captured, not shown. The proof on screen
   is the sweep after it (HEALTHY) and the reboot's menu.

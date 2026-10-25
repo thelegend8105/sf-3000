@@ -58,6 +58,11 @@ the machine is touched.
 > service whose cause had gone healed, and one that crashed 10 seconds after
 > its restart was caught by the 30-second wait. It restarts every failed
 > service it lists, so read the list before answering y.
+>
+> **The box before the y can show a plain summary (2026-10-25).** A playbook
+> with a `summary` shows it in place of its command, and `v` shows the
+> command. The GRUB fix's box went from about 30 lines to 14. Seen on the
+> EFI desktop VM: v, then n, changed nothing; y healed in 4.9 s.
 
 ## Run it
 
@@ -187,7 +192,10 @@ machine are reported as `SKIPPED` rather than run. `--os` and `--distro`
 override the detection for testing; you should not need them in normal use.
 
 Fixes only ever run when `--fix` names one explicitly, and only after you
-confirm. A playbook that needs privilege is refused unless the engine is
+confirm. Before you answer, a box shows the fix, its risk, its undo and
+whether a snapshot is taken. When the playbook has a `summary`, the box
+describes the fix in plain words; press `v` to see the exact command and
+where the fix was tested, then answer. The command always goes to the log. A playbook that needs privilege is refused unless the engine is
 already running with it — the engine will not add `sudo` to a vetted command
 on your behalf.
 
@@ -212,6 +220,7 @@ exit code zero, …).
 | `fix.<distro>`       | vetted fix command, keyed by distro (or `default`)          |
 | `verify.rerun`       | re-run detect after a fix to *prove* recovery — **mandatory whenever `fix` is present** |
 | `verify.settle_seconds` | wait this long after the fix, then re-check once — for effects that take time or may not hold |
+| `summary`            | optional: what the fix changes, in plain words. The box before the y shows it in place of the command; `v` shows the command |
 | `source`             | provenance — who vetted it and where it was tested          |
 
 The library is the trust anchor: entries that fail the schema are rejected

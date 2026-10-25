@@ -13,6 +13,7 @@ No pytest — the engine's only deps are pyyaml and jsonschema, and this keeps
 it that way. Exits non-zero if any check fails.
 """
 
+import builtins
 import io
 import sys
 import tempfile
@@ -86,14 +87,16 @@ def drive(pb, *, detects, runs=(), answer=True, privileged=True,
     runner.has_privilege = lambda: privileged
     runner.time = SimpleNamespace(
         sleep=lambda s: seen["events"].append(f"sleep:{s}"))
+    out = io.StringIO()
     try:
-        with tempfile.TemporaryDirectory() as td, redirect_stdout(io.StringIO()):
+        with tempfile.TemporaryDirectory() as td, redirect_stdout(out):
             rc = runner.fix_one(pb, distro, Path(td) / "runs.jsonl", host_os)
     finally:
         for name, fn in ORIGINAL.items():
             setattr(runner, name, fn)
         runner.time = ORIGINAL_TIME
     seen["rc"] = rc
+    seen["out"] = out.getvalue()
     return SimpleNamespace(**seen)
 
 
@@ -240,6 +243,104 @@ with tempfile.TemporaryDirectory() as td:
     check("no 'DRY-RUN fix' line", "DRY-RUN fix" in text, False)
     check("no --fix hint", "--fix <id>" in text, False)
     check("still counted as a problem", "1 problem(s) found" in text, True)
+
+
+def box(pb, answers):
+    """Run the real confirm, with these answers typed at its questions. Returns
+    the result, each question with what was on screen when it was asked, and
+    everything printed."""
+    feed, asked, out = list(answers), [], io.StringIO()
+
+    def fake_input(question):
+        asked.append((question, out.getvalue()))
+        if not feed:
+            raise EOFError
+        return feed.pop(0)
+
+    real, builtins.input = builtins.input, fake_input
+    try:
+        with redirect_stdout(out):
+            got = runner.confirm(pb, "fix-command\nsecond-line", False)
+    finally:
+        builtins.input = real
+    return got, asked, out.getvalue()
+
+
+SUMMED = playbook(summary="Puts the fixture back the way it was.",
+                  source="fixture, tested nowhere")
+
+print("16. a summary stands in for the command; v shows it")
+got, asked, text = box(SUMMED, ["y"])
+first_screen = asked[0][1]
+check("y runs it", got, True)
+check("the box shows the summary", "fix       : Puts the fixture back" in first_screen, True)
+check("  and not the command", "fix-command" in first_screen, False)
+check("  nor the source", "tested nowhere" in first_screen, False)
+check("  and says how to see them", "press v" in first_screen, True)
+check("the question offers v", asked[0][0], "Run this fix? [y/N/v] ")
+got, asked, text = box(SUMMED, ["v", "y"])
+check("v then y runs it", (got, len(asked)), (True, 2))
+after_v = asked[1][1][len(asked[0][1]):]
+check("v shows every line of the command",
+      ("  | fix-command" in after_v, "  | second-line" in after_v), (True, True))
+check("v shows the source", "tested nowhere" in after_v, True)
+check("v then n runs nothing", box(SUMMED, ["v", "n"])[0], False)
+check("v then no terminal runs nothing", box(SUMMED, ["v"])[0], False)
+check("Enter runs nothing", box(SUMMED, [""])[0], False)
+
+print("17. without a summary the box is as before")
+got, asked, text = box(playbook(source="fixture, tested nowhere"), ["v"])
+check("the box shows the command", "command   : fix-command" in asked[0][1], True)
+check("  and the source", "tested nowhere" in asked[0][1], True)
+check("the question is y/N", asked[0][0], "Run this fix? [y/N] ")
+check("v is a no, asked once", (got, len(asked)), (False, 1))
+
+print("18. --fix with a summary: the command is not printed, but is logged")
+r = drive(SUMMED, detects=[BROKEN, FIXED], runs=[OK])
+check("healed", r.record["outcome"], runner.HEALED)
+check("fix_command recorded", r.record["fix_command"], "fix-command")
+check("says it is running the fix", "running the fix" in r.out, True)
+check("  without printing the command", "fix-command" in r.out, False)
+
+print("19. sweep with a summary: the summary is shown, the command is not")
+with tempfile.TemporaryDirectory() as td:
+    (Path(td) / "summed.yaml").write_text(
+        "id: summed-proof\n"
+        "description: fixture\n"
+        "applies_to: {os: linux, distros: [ubuntu]}\n"
+        "detect: {command: 'true', produces: integer}\n"
+        "expect: {predicate: less_than, value: 90}\n"
+        "risk: moderate\n"
+        "requires_privilege: false\n"
+        "reverse: {strategy: none}\n"
+        "fix: {ubuntu: fix-command}\n"
+        "summary: Puts the fixture back the way it was.\n"
+        "verify: {rerun: detect}\n"
+        "source: fixture\n", encoding="utf-8")
+    runner.assess = lambda p: BROKEN
+    argv, sys.argv = sys.argv, ["runner.py", "--playbooks", td,
+                                "--os", "linux", "--distro", "ubuntu"]
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out):
+            runner.main()
+    finally:
+        sys.argv = argv
+        runner.assess = ORIGINAL["assess"]
+    text = out.getvalue()
+    check("loads", "summed-proof" in text, True)
+    check("shows the summary",
+          "DRY-RUN fix (ubuntu): Puts the fixture back" in text, True)
+    check("does not print the command", "fix-command" in text, False)
+    check("says where to see it", "--fix summed-proof shows the command" in text, True)
+
+print("20. schema: a summary needs a fix")
+validator = runner.Draft7Validator(runner.load_schema())
+no_fix = playbook(summary="Puts the fixture back the way it was.")
+del no_fix["fix"], no_fix["verify"]
+check("summary without a fix is rejected", validator.is_valid(no_fix), False)
+check("an empty summary is rejected", validator.is_valid(playbook(summary="")), False)
+check("summary with a fix is accepted", validator.is_valid(SUMMED), True)
 
 print()
 if FAILURES:

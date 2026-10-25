@@ -77,6 +77,7 @@ fix:
       printf '%s\n' '' '# Look for other systems, such as Windows, each time the menu is rebuilt.' 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
     fi
     update-grub
+summary: Turns GRUB's search for other systems back on in /etc/default/grub, keeping a copy of the old file, and rebuilds the start-up menu. Nothing of Windows' is changed.
 verify:
   rerun: detect
-source: "CANDIDATE - NOT VETTED. Run on the EFI 22.10 desktop VM (stand-in Windows) on 2026-10-16 (tests/grub-windows-proof/): healed in about 5 s with nothing of Windows' changed, and undone with /etc/default/grub back byte for byte (evidence/ubuntu-22.10-2026-10-16-3 to -8). Not yet run with a real Windows, on BIOS, or on another release."
+source: "CANDIDATE - NOT VETTED. Run on the EFI 22.10 desktop VM (stand-in Windows) on 2026-10-16 (tests/grub-windows-proof/): healed in about 5 s with nothing of Windows' changed, and undone with /etc/default/grub back byte for byte (evidence/ubuntu-22.10-2026-10-16-3 to -8). Healed again with its summary in the box on 2026-10-25 (evidence/ubuntu-22.10-2026-10-25). Not yet run with a real Windows, on BIOS, or on another release."

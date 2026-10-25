@@ -947,6 +947,25 @@ which deletes the clone's run log. Times are IST.
 - `-8`, Run 6, `279952d`: Run 2 again. `rolled_back`, verify_after 1, at
   19:46. `/etc/default/grub` and grub.cfg came back byte for byte.
 
+### `ubuntu-22.10-2026-10-25.jsonl`
+
+The box before the y with a `summary` (branch `confirm-summary`, commit
+`a298fc9`), on `KineticDesktop` from VBox snapshot `grub-trap`. The clone's
+`logs/runs.jsonl`, copied off at 15:04 IST, md5 checked. Times are IST.
+Console output, screenshots and the Windows checks are in
+`logs/confirm-summary-run-1/` (not in git).
+
+- Line 1, 14:59: `windows-missing-from-grub` `declined`. The box showed the
+  summary and not the command. v printed the command and the source, then
+  the question again. Answered n. `/etc/default/grub` kept its md5
+  (`e7e2c4ab...`), and no backup was made. `fix_command` holds the full
+  command.
+- Line 2, 14:59: `healed`, 1 → 0, 4.9 s from the y. The engine printed
+  "running the fix (its command goes to the log)", not the command.
+  `check-windows.sh` after it matched the record from before the trap. The
+  only change from the trap state was GRUB's menu, which listed Windows
+  again.
+
 ### `ubuntu-22.10-2026-10-16-9.jsonl`
 
 Run 3 of `tests/efi-proof/`: visit 1 on `KineticDesktop` with lab computer
