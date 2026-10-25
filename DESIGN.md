@@ -376,7 +376,7 @@ proactive sweep) live in the MVP.
   diagnoses, and prints fixes as dry-run. With `--fix <id>` it also runs the
   P1 lifecycle: confirm, fix, settle (when asked), verify, log, roll back.
   A playbook with a `summary` shows it in the box in place of its command,
-  with `v` to see the command (offline-proven only, 2026-10-25).
+  with `v` to see the command (seen on the EFI desktop VM, 2026-10-25).
   With `--run <id>` it starts a procedure (`--take-snapshot` or
   `--snapshot <name>` when it cannot be undone), after checking apt and
   installing Timeshift if it is missing; `--status` and `--cancel` follow it.
@@ -1374,12 +1374,18 @@ schema rejects it.
 
 Offline: 27 new checks in `tests/lifecycle-proof/` (the box with and
 without a summary, `v` then y, n, Enter or no terminal, the record, the
-sweep, and the schema). Passing on Python 3.12 and 3.10. Not yet run on a
-VM.
+sweep, and the schema). Passing on Python 3.12 and 3.10. *On a VM on
+2026-10-25* (`KineticDesktop`, from `grub-trap`): the sweep and the box
+showed the summary and no command. v, then n, was `declined` with nothing
+changed. y was `healed` in 4.9 s, with Windows' parts unchanged. Both
+records hold the full command (`evidence/ubuntu-22.10-2026-10-25.jsonl`).
 
 ---
 
-*Last updated: revision 38 — a playbook can carry a plain `summary`, which
+*Last updated: revision 39 — the box with a `summary` ran on the EFI
+desktop VM (2026-10-25): v showed the command, n declined, y healed;
+§13 and §16 updated.
+Revision 38 — a playbook can carry a plain `summary`, which
 the box before the y shows in place of the command, with `v` to see the
 command (2026-10-25); offline only; §13 and §16 updated.
 Revision 37 — visit 1 healed on lab computer MITB-IT-406-03

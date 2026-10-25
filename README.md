@@ -61,8 +61,8 @@ the machine is touched.
 >
 > **The box before the y can show a plain summary (2026-10-25).** A playbook
 > with a `summary` shows it in place of its command, and `v` shows the
-> command. The GRUB fix's box went from about 30 lines to 14. Proven offline
-> only; not yet run on a VM.
+> command. The GRUB fix's box went from about 30 lines to 14. Seen on the
+> EFI desktop VM: v, then n, changed nothing; y healed in 4.9 s.
 
 ## Run it
 
